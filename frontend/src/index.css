@@ -1,0 +1,58 @@
+/* src/index.css */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Base resets ───────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue',
+               Arial, sans-serif;
+  background-color: #f1f5f9;
+  color: #1e293b;
+}
+
+/* ── Scrollbar ─────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #f1f5f9; }
+::-webkit-scrollbar-thumb { background: #94a3b8; border-radius: 3px; }
+
+/* ── Reusable utility classes ──────────────────────────────── */
+@layer components {
+  /* Primary button */
+  .btn-primary {
+    @apply bg-blue-700 hover:bg-blue-800 text-white font-semibold
+           px-4 py-2 rounded-lg transition-colors duration-200
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  /* Secondary / outline button */
+  .btn-secondary {
+    @apply border border-blue-700 text-blue-700 hover:bg-blue-50
+           font-semibold px-4 py-2 rounded-lg transition-colors duration-200;
+  }
+
+  /* Card container */
+  .card {
+    @apply bg-white rounded-xl shadow-sm border border-slate-200 p-6;
+  }
+
+  /* Skill badge */
+  .badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+
+  /* Form input */
+  .input {
+    @apply w-full border border-slate-300 rounded-lg px-3 py-2 text-sm
+           focus:outline-none focus:ring-2 focus:ring-blue-500
+           placeholder:text-slate-400 bg-white;
+  }
+
+  /* Section heading */
+  .section-title {
+    @apply text-lg font-bold text-slate-800 mb-4;
+  }
+}
