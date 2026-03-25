@@ -15,7 +15,7 @@ export default function LoginPage() {
   // ── Redirect if already authenticated ────────────────────────
   useEffect(() => {
     if (!isLoading && user) {
-      navigate('/app/dashboard', { replace: true })
+      navigate('/app/home', { replace: true })
     }
   }, [user, isLoading, navigate])
 
@@ -25,14 +25,14 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-900 via-blue-800 to-blue-700
+    <div className="min-h-screen bg-gradient-to-br from-[#0F172A] via-slate-900 to-blue-900
                     flex items-center justify-center px-4">
       <div className="bg-white rounded-2xl shadow-2xl p-10 w-full max-w-md text-center">
 
         {/* Logo */}
         <div className="flex items-center justify-center gap-3 mb-6">
-          <div className="w-12 h-12 bg-blue-700 rounded-xl flex items-center justify-center">
-            <span className="text-white font-black text-2xl">S</span>
+          <div className="w-12 h-12 bg-blue-900 rounded-xl flex items-center justify-center">
+            <span className="text-cyan-400 font-black text-2xl">S</span>
           </div>
           <span className="text-3xl font-black text-blue-900">Skillify</span>
         </div>
@@ -63,7 +63,7 @@ export default function LoginPage() {
         <button
           onClick={handleGoogleLogin}
           className="w-full flex items-center justify-center gap-3 border-2 border-slate-200
-                     rounded-xl py-3 px-5 hover:border-blue-400 hover:bg-blue-50
+                     rounded-xl py-3 px-5 hover:border-cyan-400 hover:bg-sky-50
                      transition-all duration-200 font-semibold text-slate-700 shadow-sm"
         >
           {/* Google G logo SVG */}

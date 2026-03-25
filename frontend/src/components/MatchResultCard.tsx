@@ -169,7 +169,7 @@ function QuestionRow({ question: q, index }: { question: InterviewQuestion; inde
   const catColor: Record<string, string> = {
     Technical:   'bg-blue-100 text-blue-800',
     Gap:         'bg-orange-100 text-orange-800',
-    Behavioural: 'bg-purple-100 text-purple-800',
+    Behavioural: 'bg-violet-100 text-violet-800',
     Situational: 'bg-teal-100 text-teal-800',
   }
   const diffColor: Record<string, string> = {

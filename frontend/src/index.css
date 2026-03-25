@@ -23,14 +23,14 @@ body {
 @layer components {
   /* Primary button */
   .btn-primary {
-    @apply bg-blue-700 hover:bg-blue-800 text-white font-semibold
+    @apply bg-blue-900 hover:bg-blue-950 text-white font-semibold
            px-4 py-2 rounded-lg transition-colors duration-200
            disabled:opacity-50 disabled:cursor-not-allowed;
   }
 
   /* Secondary / outline button */
   .btn-secondary {
-    @apply border border-blue-700 text-blue-700 hover:bg-blue-50
+    @apply border border-blue-900 text-blue-900 hover:bg-sky-50
            font-semibold px-4 py-2 rounded-lg transition-colors duration-200;
   }
 
@@ -47,7 +47,7 @@ body {
   /* Form input */
   .input {
     @apply w-full border border-slate-300 rounded-lg px-3 py-2 text-sm
-           focus:outline-none focus:ring-2 focus:ring-blue-500
+           focus:outline-none focus:ring-2 focus:ring-sky-500
            placeholder:text-slate-400 bg-white;
   }
 

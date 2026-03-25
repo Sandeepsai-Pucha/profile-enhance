@@ -1,165 +1,157 @@
 """
 services/google_drive_service.py
 ─────────────────────────────────
-Handles reading candidate resume files from Google Drive.
-Uses the user's OAuth access_token (stored in DB after login)
-to call the Drive API on their behalf.
+Fetch resume files from Google Drive and extract their text.
+NO database writes — all data is returned to the caller in-memory.
 
-In development / demo mode you can skip real Drive calls
-and use seed data instead (set USE_SEED_DATA=true in .env).
+Supports PDF, DOCX, and plain-text files.
 """
 
-import os
 import io
 import PyPDF2
 import docx
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
+
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 from google.oauth2.credentials import Credentials
-from dotenv import load_dotenv
-
-load_dotenv()
-
-# ── Scopes required for reading Drive files ───────────────────
-SCOPES = [
-    "https://www.googleapis.com/auth/drive.readonly",
-    "openid",
-    "email",
-    "profile",
-]
 
 
+# ─────────────────────────────────────────────────────────────
+# Build an authenticated Drive API client
+# ─────────────────────────────────────────────────────────────
 def _get_drive_service(access_token: str):
-    """
-    Build an authenticated Google Drive API client
-    using the user's OAuth access token.
-    """
     creds = Credentials(token=access_token)
     return build("drive", "v3", credentials=creds)
 
 
 # ─────────────────────────────────────────────────────────────
-# LIST FILES IN A DRIVE FOLDER
+# Extract plain text from in-memory file bytes
 # ─────────────────────────────────────────────────────────────
-def list_resume_files(access_token: str, folder_id: Optional[str] = None) -> List[Dict]:
+def _extract_text(file_bytes: bytes, mime_type: str) -> str:
     """
-    List PDF and DOCX files in the user's Google Drive
-    (optionally scoped to a specific folder).
+    Extract text from PDF, DOCX, or plain-text bytes.
+    Returns empty string if extraction fails.
+    """
+    try:
+        if "pdf" in mime_type:
+            reader = PyPDF2.PdfReader(io.BytesIO(file_bytes))
+            return "\n".join(page.extract_text() or "" for page in reader.pages).strip()
 
-    Returns list of {id, name, mimeType, webViewLink}
+        elif "wordprocessingml" in mime_type or "docx" in mime_type:
+            doc = docx.Document(io.BytesIO(file_bytes))
+            return "\n".join(p.text for p in doc.paragraphs).strip()
+
+        elif "text/plain" in mime_type:
+            return file_bytes.decode("utf-8", errors="replace").strip()
+
+    except Exception as e:
+        print(f"[Drive] Text extraction failed ({mime_type}): {e}")
+
+    return ""
+
+
+# ─────────────────────────────────────────────────────────────
+# LIST resume files in Drive (PDF / DOCX / TXT)
+# ─────────────────────────────────────────────────────────────
+def list_resume_files(
+    access_token: str,
+    folder_id: Optional[str] = None,
+    page_size: int = 100,
+) -> List[Dict]:
+    """
+    Return a list of Drive file metadata dicts:
+      {id, name, mimeType, webViewLink}
+
+    If folder_id is given, only files in that folder are returned.
+    Otherwise all PDF/DOCX/TXT files in the user's Drive are listed.
+
+    Raises on auth errors so the caller can surface them properly.
     """
     service = _get_drive_service(access_token)
 
-    # Build query: only PDF and DOCX in the given folder (or root)
     mime_filter = (
         "mimeType='application/pdf' or "
-        "mimeType='application/vnd.openxmlformats-officedocument.wordprocessingml.document'"
+        "mimeType='application/vnd.openxmlformats-officedocument.wordprocessingml.document' or "
+        "mimeType='text/plain'"
     )
     query = f"({mime_filter}) and trashed=false"
     if folder_id:
         query += f" and '{folder_id}' in parents"
 
-    response = service.files().list(
+    result = service.files().list(
         q=query,
         fields="files(id, name, mimeType, webViewLink)",
-        pageSize=100,
+        pageSize=page_size,
+        orderBy="name",
     ).execute()
 
-    return response.get("files", [])
+    return result.get("files", [])
 
 
 # ─────────────────────────────────────────────────────────────
-# DOWNLOAD & PARSE A SINGLE RESUME FILE
+# DOWNLOAD + PARSE a single resume file
 # ─────────────────────────────────────────────────────────────
-def download_and_parse_resume(access_token: str, file_id: str, mime_type: str) -> str:
+def download_and_parse_resume(
+    access_token: str,
+    file_id: str,
+    mime_type: str,
+) -> Tuple[str, Optional[str]]:
     """
-    Download a file from Drive and extract plain text.
-    Supports PDF and DOCX formats.
+    Download one file from Drive and extract its text.
 
-    Returns extracted text string (may be empty if parsing fails).
+    Returns (text, error_message).
+    text is empty and error_message is set on failure.
     """
-    service = _get_drive_service(access_token)
+    try:
+        service  = _get_drive_service(access_token)
+        request  = service.files().get_media(fileId=file_id)
+        fh       = io.BytesIO()
+        loader   = MediaIoBaseDownload(fh, request)
 
-    # Stream the file content into memory
-    request   = service.files().get_media(fileId=file_id)
-    fh        = io.BytesIO()
-    downloader = MediaIoBaseDownload(fh, request)
+        done = False
+        while not done:
+            _, done = loader.next_chunk()
 
-    done = False
-    while not done:
-        _, done = downloader.next_chunk()
+        fh.seek(0)
+        text = _extract_text(fh.read(), mime_type)
 
-    fh.seek(0)
-    text = ""
+        if not text:
+            return "", "File downloaded but no text could be extracted (scanned PDF?)"
 
-    if mime_type == "application/pdf":
-        # Extract text from PDF using PyPDF2
-        reader = PyPDF2.PdfReader(fh)
-        for page in reader.pages:
-            text += (page.extract_text() or "") + "\n"
+        return text, None
 
-    elif "wordprocessingml" in mime_type:
-        # Extract text from DOCX using python-docx
-        document = docx.Document(fh)
-        text = "\n".join([para.text for para in document.paragraphs])
-
-    return text.strip()
+    except Exception as e:
+        return "", str(e)
 
 
 # ─────────────────────────────────────────────────────────────
-# SYNC ALL RESUMES FROM DRIVE INTO OUR DB
+# HIGH-LEVEL: fetch all resumes as {file_meta, text} dicts
 # ─────────────────────────────────────────────────────────────
-def sync_drive_resumes(access_token: str, db, folder_id: Optional[str] = None) -> int:
+def fetch_all_resumes(
+    access_token: str,
+    folder_id: Optional[str] = None,
+) -> Tuple[List[Dict], List[str]]:
     """
-    High-level function called by the /candidates/sync endpoint.
-    1. Lists all resume files in Drive
-    2. Downloads + parses each one
-    3. Upserts CandidateProfile rows in the DB
+    List and download all resume files from Drive.
 
-    Returns count of profiles synced.
+    Returns:
+      resumes: list of {id, name, mimeType, webViewLink, text}
+      errors:  list of human-readable error strings for failed files
     """
-    from models import CandidateProfile
+    try:
+        files = list_resume_files(access_token, folder_id)
+    except Exception as e:
+        return [], [f"Could not list Drive files: {e}"]
 
-    files = list_resume_files(access_token, folder_id)
-    synced = 0
+    resumes: List[Dict] = []
+    errors:  List[str]  = []
 
     for f in files:
-        try:
-            text = download_and_parse_resume(access_token, f["id"], f["mimeType"])
-            if not text:
-                continue
-
-            # Derive candidate name from file name (e.g. "John_Doe_Resume.pdf" → "John Doe")
-            name = f["name"].replace("_", " ").replace("-", " ")
-            for suffix in ["Resume", "CV", ".pdf", ".docx"]:
-                name = name.replace(suffix, "").strip()
-
-            # Check if candidate already exists by drive file ID
-            existing = db.query(CandidateProfile).filter(
-                CandidateProfile.drive_file_id == f["id"]
-            ).first()
-
-            if existing:
-                # Update resume text
-                existing.resume_text     = text
-                existing.drive_file_url  = f.get("webViewLink")
-            else:
-                # Create new candidate profile
-                candidate = CandidateProfile(
-                    name          = name,
-                    email         = f"unknown_{f['id']}@placeholder.com",  # will be enriched later
-                    resume_text   = text,
-                    drive_file_id = f["id"],
-                    drive_file_url= f.get("webViewLink"),
-                )
-                db.add(candidate)
-
-            synced += 1
-
-        except Exception as e:
-            print(f"[Drive Sync] Failed to process file {f['name']}: {e}")
+        text, err = download_and_parse_resume(access_token, f["id"], f["mimeType"])
+        if err:
+            errors.append(f"{f['name']}: {err}")
             continue
+        resumes.append({**f, "text": text})
 
-    db.commit()
-    return synced
+    return resumes, errors
