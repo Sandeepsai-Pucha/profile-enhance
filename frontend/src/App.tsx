@@ -11,6 +11,7 @@ import HomePage from './pages/HomePage'
 import DashboardPage from './pages/DashboardPage'
 import JobsPage from './pages/JobsPage'
 import PipelinePage from './pages/PipelinePage'
+import InterviewersPage from './pages/InterviewersPage'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useAuth()
@@ -46,7 +47,8 @@ export default function App() {
         <Route path="home"      element={<HomePage />} />
         <Route path="dashboard" element={<DashboardPage />} />
         <Route path="jobs"      element={<JobsPage />} />
-        <Route path="pipeline"  element={<PipelinePage />} />
+        <Route path="pipeline"     element={<PipelinePage />} />
+        <Route path="interviewers" element={<InterviewersPage />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

@@ -22,7 +22,11 @@ from database import get_db
 from models import JobDescription, User
 from schemas import JDCreate, JDOut
 from routers.auth import get_current_user
-from services.ai_service import parse_jd
+import os as _os
+if _os.getenv("AI_PROVIDER", "gemini").lower() == "ollama":
+    from services.ollama_service import parse_jd
+else:
+    from services.ai_service import parse_jd
 
 router = APIRouter(prefix="/jobs", tags=["Job Descriptions"])
 
