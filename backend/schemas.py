@@ -141,6 +141,28 @@ class PipelineResponse(BaseModel):
 
 
 # ═══════════════════════════════════════════════════════════════
+#  INTERVIEW SCHEDULING  (ephemeral — never stored in DB)
+# ═══════════════════════════════════════════════════════════════
+
+class ScheduleInterviewRequest(BaseModel):
+    candidate_name:    str
+    candidate_email:   Optional[str] = None
+    interviewer_email: str
+    jd_title:          str
+    resume_url:        str
+    ai_summary:        str
+    start_datetime:    str   # ISO 8601, e.g. "2026-03-26T10:00:00"
+    end_datetime:      str   # ISO 8601, e.g. "2026-03-26T10:45:00"
+    timezone:          str = "Asia/Kolkata"
+
+
+class ScheduleInterviewResponse(BaseModel):
+    event_id:   str
+    event_link: str
+    message:    str
+
+
+# ═══════════════════════════════════════════════════════════════
 #  SKILL CATEGORY
 # ═══════════════════════════════════════════════════════════════
 

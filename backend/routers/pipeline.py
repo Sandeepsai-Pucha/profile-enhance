@@ -33,16 +33,52 @@ from schemas import (
     PipelineStats, JDOut,
 )
 from routers.auth import get_current_user
-from services.ai_service import (
-    parse_resume,
-    match_resume_to_jd,
-    generate_improvement_suggestions,
-    generate_interview_questions,
-    generate_executive_summary,
-)
-from services.google_drive_service import fetch_all_resumes
+import os as _os
+if _os.getenv("AI_PROVIDER", "gemini").lower() == "ollama":
+    from services.ollama_service import (
+        parse_resume,
+        match_resume_to_jd,
+        generate_improvement_suggestions,
+        generate_interview_questions,
+        generate_executive_summary,
+    )
+else:
+    from services.ai_service import (
+        parse_resume,
+        match_resume_to_jd,
+        generate_improvement_suggestions,
+        generate_interview_questions,
+        generate_executive_summary,
+    )
+from services.google_drive_service import fetch_all_resumes, search_folders
 
 router = APIRouter(prefix="/pipeline", tags=["Pipeline"])
+
+
+# ─────────────────────────────────────────────────────────────
+# GET /pipeline/folders?q=<name>  — search Drive folders by name
+# ─────────────────────────────────────────────────────────────
+@router.get("/folders")
+def search_drive_folders(
+    q: str,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Search the user's Google Drive for folders whose name contains `q`.
+    Returns [{id, name}, ...].
+    """
+    if not current_user.access_token:
+        raise HTTPException(
+            status_code=403,
+            detail="No Google Drive access token. Please sign out and sign in again.",
+        )
+    if not q or len(q.strip()) < 1:
+        return []
+    try:
+        folders = search_folders(current_user.access_token, q.strip())
+        return folders
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Drive folder search failed: {e}")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -172,28 +208,35 @@ def run_pipeline(
     errors.extend(fetch_errors)
 
     if not resumes:
-        raise HTTPException(
-            status_code=404,
-            detail="No resume files found in Google Drive. "
-                   "Upload PDF/DOCX/TXT resumes and try again, "
-                   "or specify a drive_folder_id.",
-        )
+        detail = "No resume files found in Google Drive. Upload PDF/DOCX/TXT resumes and try again, or specify a drive_folder_id."
+        if fetch_errors:
+            detail += " Drive errors: " + "; ".join(fetch_errors)
+        raise HTTPException(status_code=404, detail=detail)
 
-    # ── Steps 3+4: Parse + match all resumes (parallel) ──────
+    # ── Steps 3+4: Parse + match all resumes ─────────────────
     all_results: List[CandidateMatchResult] = []
 
-    # Use ThreadPoolExecutor for I/O-bound AI calls
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-        future_map = {
-            executor.submit(_process_one_resume, file_meta, jd_data, jd_obj, jd_raw_text): file_meta
-            for file_meta in resumes
-        }
-        for future in concurrent.futures.as_completed(future_map):
-            result, err = future.result()
+    # Ollama processes one request at a time — run sequentially to avoid timeouts.
+    # Gemini can handle parallel requests — use ThreadPoolExecutor.
+    if _os.getenv("AI_PROVIDER", "gemini").lower() == "ollama":
+        for file_meta in resumes:
+            result, err = _process_one_resume(file_meta, jd_data, jd_obj, jd_raw_text)
             if err:
                 errors.append(err)
             elif result:
                 all_results.append(result)
+    else:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            future_map = {
+                executor.submit(_process_one_resume, file_meta, jd_data, jd_obj, jd_raw_text): file_meta
+                for file_meta in resumes
+            }
+            for future in concurrent.futures.as_completed(future_map):
+                result, err = future.result()
+                if err:
+                    errors.append(err)
+                elif result:
+                    all_results.append(result)
 
     # ── Step 5: Filter by min_score ───────────────────────────
     above_threshold = [r for r in all_results if r.match_score >= payload.min_score]

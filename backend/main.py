@@ -18,6 +18,7 @@ from database import engine, Base, get_db
 from routers import auth
 from routers import jobs
 from routers import pipeline
+from routers import interviews
 from routers.auth import get_current_user
 
 load_dotenv()
@@ -43,9 +44,10 @@ app.add_middleware(
 )
 
 # ── Routers ───────────────────────────────────────────────────
-app.include_router(auth.router)       # /auth/*
-app.include_router(jobs.router)       # /jobs/*
-app.include_router(pipeline.router)   # /pipeline/*
+app.include_router(auth.router)        # /auth/*
+app.include_router(jobs.router)        # /jobs/*
+app.include_router(pipeline.router)    # /pipeline/*
+app.include_router(interviews.router)  # /interviews/*
 
 
 # ─────────────────────────────────────────────────────────────

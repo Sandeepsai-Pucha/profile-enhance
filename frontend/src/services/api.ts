@@ -3,14 +3,14 @@
 // Axios instance + all API call helpers.
 
 import axios from "axios";
-import type { PipelineRequest, PipelineResponse } from "../types";
+import type { PipelineRequest, PipelineResponse, Interviewer, ScheduleInterviewRequest, ScheduleInterviewResponse } from "../types";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
 const api = axios.create({
   baseURL: BASE_URL,
   headers: { "Content-Type": "application/json" },
-  timeout: 120_000, // 2 min — pipeline can be slow with many resumes
+  timeout: 600_000, // 10 min — Ollama on CPU can be slow with many resumes
 });
 
 // ── Inject Bearer token on every request ──────────────────────
@@ -45,6 +45,7 @@ export const getGoogleLoginUrl = (): string => {
   const scopes = [
     "openid", "email", "profile",
     "https://www.googleapis.com/auth/drive.readonly",
+    "https://www.googleapis.com/auth/calendar.events",
   ].join(" ");
 
   const params = new URLSearchParams({
@@ -103,5 +104,20 @@ export const deleteJD = (id: number) =>
  */
 export const runPipeline = (payload: PipelineRequest): Promise<PipelineResponse> =>
   api.post("/pipeline/run", payload).then((r) => r.data);
+
+export const searchDriveFolders = (q: string): Promise<{ id: string; name: string }[]> =>
+  api.get("/pipeline/folders", { params: { q } }).then((r) => r.data);
+
+// ══════════════════════════════════════════════════════════════
+//  INTERVIEW SCHEDULING
+// ══════════════════════════════════════════════════════════════
+
+export const fetchInterviewers = (): Promise<Interviewer[]> =>
+  api.get("/interviews/interviewers").then((r) => r.data);
+
+export const scheduleInterview = (
+  payload: ScheduleInterviewRequest
+): Promise<ScheduleInterviewResponse> =>
+  api.post("/interviews/schedule", payload).then((r) => r.data);
 
 export default api;

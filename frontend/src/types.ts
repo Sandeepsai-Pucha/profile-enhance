@@ -94,3 +94,29 @@ export interface PipelineResponse {
   stats:             PipelineStats
   errors:            string[]
 }
+
+// ── Interview Scheduling ──────────────────────────────────────
+export interface Interviewer {
+  name:           string
+  email:          string
+  available_from: string   // "09:00"
+  available_to:   string   // "17:00"
+}
+
+export interface ScheduleInterviewRequest {
+  candidate_name:    string
+  candidate_email:   string | null
+  interviewer_email: string
+  jd_title:          string
+  resume_url:        string
+  ai_summary:        string
+  start_datetime:    string   // ISO 8601
+  end_datetime:      string   // ISO 8601
+  timezone?:         string
+}
+
+export interface ScheduleInterviewResponse {
+  event_id:   string
+  event_link: string
+  message:    string
+}

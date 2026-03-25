@@ -3,15 +3,15 @@
 // Run the full 9-step resume matching pipeline for a selected JD.
 // No candidate data is stored — everything is live and ephemeral.
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useSearchParams, Link } from 'react-router-dom'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import {
   Cpu, FileText, AlertCircle, CheckCircle2, Clock,
-  Users, BarChart3, ChevronDown, FolderOpen,
+  Users, BarChart3, ChevronDown, FolderOpen, X,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { fetchJDs, runPipeline } from '../services/api'
+import { fetchJDs, runPipeline, searchDriveFolders } from '../services/api'
 import type { JobDescription, PipelineResponse } from '../types'
 import CandidateResultCard from '../components/CandidateResultCard'
 import BackButton from '../components/BackButton'
@@ -56,15 +56,22 @@ function StepList({ currentStep }: { currentStep: number }) {
 
 export default function PipelinePage() {
   const [searchParams] = useSearchParams()
-  const preselectedJdId     = searchParams.get('jd')     ? Number(searchParams.get('jd')) : null
-  const preselectedFolder   = searchParams.get('folder') || import.meta.env.VITE_DEFAULT_DRIVE_FOLDER_ID || ''
+  const preselectedJdId   = searchParams.get('jd') ? Number(searchParams.get('jd')) : null
+  const preselectedFolder = searchParams.get('folder') || import.meta.env.VITE_DEFAULT_DRIVE_FOLDER_ID || ''
 
-  const [selectedJdId, setSelectedJdId]     = useState<number | null>(preselectedJdId)
-  const [driveFolderId, setDriveFolderId]   = useState(preselectedFolder)
-  const [topN,          setTopN]            = useState(5)
-  const [minScore,      setMinScore]        = useState(40)
-  const [currentStep,   setCurrentStep]     = useState(-1)
-  const [result,        setResult]          = useState<PipelineResponse | null>(null)
+  const [selectedJdId, setSelectedJdId] = useState<number | null>(preselectedJdId)
+  const [driveFolderId, setDriveFolderId] = useState(preselectedFolder)
+  // Folder name search state
+  const [folderResults, setFolderResults]   = useState<{ id: string; name: string }[]>([])
+  const [folderName, setFolderName]         = useState('')
+  const [folderSearching, setFolderSearching] = useState(false)
+  const [showDropdown, setShowDropdown]     = useState(false)
+  const folderDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const [topN,        setTopN]      = useState(5)
+  const [minScore,    setMinScore]  = useState(40)
+  const [currentStep, setCurrentStep] = useState(-1)
+  const [result,      setResult]    = useState<PipelineResponse | null>(null)
 
   const { data: jds = [], isLoading: jdsLoading } = useQuery<JobDescription[]>({
     queryKey: ['jds'],
@@ -75,6 +82,44 @@ export default function PipelinePage() {
   useEffect(() => {
     if (preselectedJdId) setSelectedJdId(preselectedJdId)
   }, [preselectedJdId])
+
+  // Folder name search — debounced
+  const handleFolderSearch = (value: string) => {
+    setFolderName(value)
+    setDriveFolderId('')
+    setShowDropdown(true)
+    if (folderDebounceRef.current) clearTimeout(folderDebounceRef.current)
+    if (!value.trim()) {
+      setFolderResults([])
+      setShowDropdown(false)
+      return
+    }
+    folderDebounceRef.current = setTimeout(async () => {
+      setFolderSearching(true)
+      try {
+        const results = await searchDriveFolders(value.trim())
+        setFolderResults(results)
+      } catch {
+        setFolderResults([])
+      } finally {
+        setFolderSearching(false)
+      }
+    }, 400)
+  }
+
+  const selectFolder = (folder: { id: string; name: string }) => {
+    setDriveFolderId(folder.id)
+    setFolderName(folder.name)
+    setFolderResults([])
+    setShowDropdown(false)
+  }
+
+  const clearFolder = () => {
+    setDriveFolderId('')
+    setFolderName('')
+    setFolderResults([])
+    setShowDropdown(false)
+  }
 
   // Simulate step progress while the pipeline is running
   useEffect(() => {
@@ -165,25 +210,57 @@ export default function PipelinePage() {
               </div>
             </div>
 
-            {/* Drive folder */}
-            <div>
+            {/* Drive folder name search */}
+            <div className="relative">
               <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">
-                Drive Folder ID <span className="font-normal text-slate-400">(optional)</span>
+                Drive Folder <span className="font-normal text-slate-400">(optional)</span>
               </label>
               <div className="relative">
                 <FolderOpen size={14} className="absolute left-3 top-3 text-slate-400" />
                 <input
                   type="text"
-                  placeholder="Leave blank to search entire Drive"
-                  value={driveFolderId}
-                  onChange={(e) => setDriveFolderId(e.target.value)}
-                  className="w-full border border-slate-300 rounded-lg pl-8 pr-3 py-2.5 text-sm
+                  placeholder="Type folder name to search…"
+                  value={folderName}
+                  onChange={(e) => handleFolderSearch(e.target.value)}
+                  onFocus={() => folderResults.length > 0 && setShowDropdown(true)}
+                  className="w-full border border-slate-300 rounded-lg pl-8 pr-8 py-2.5 text-sm
                              focus:outline-none focus:ring-2 focus:ring-sky-500"
                 />
+                {folderSearching && (
+                  <div className="absolute right-3 top-3 w-3.5 h-3.5 border-2 border-sky-400 border-t-transparent rounded-full animate-spin" />
+                )}
+                {folderName && !folderSearching && (
+                  <button onClick={clearFolder} className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600">
+                    <X size={14} />
+                  </button>
+                )}
               </div>
-              <p className="text-xs text-slate-400 mt-1">
-                From the Drive folder URL: /folders/<strong>THIS_PART</strong>
-              </p>
+
+              {/* Dropdown results */}
+              {showDropdown && folderResults.length > 0 && (
+                <ul className="absolute z-10 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                  {folderResults.map((f) => (
+                    <li
+                      key={f.id}
+                      onClick={() => selectFolder(f)}
+                      className="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-sky-50 hover:text-blue-900"
+                    >
+                      <FolderOpen size={13} className="text-sky-400 shrink-0" />
+                      {f.name}
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {/* Resolved folder ID badge */}
+              {driveFolderId && (
+                <p className="text-xs text-green-600 mt-1 font-medium">
+                  ✓ Folder selected — searching within "{folderName}"
+                </p>
+              )}
+              {!driveFolderId && !folderName && (
+                <p className="text-xs text-slate-400 mt-1">Leave blank to search your entire Drive</p>
+              )}
             </div>
 
             {/* Top N */}
@@ -319,7 +396,7 @@ export default function PipelinePage() {
                     Top {result.top_candidates.length} Candidate{result.top_candidates.length !== 1 ? 's' : ''}
                   </h3>
                   {result.top_candidates.map((c, i) => (
-                    <CandidateResultCard key={c.drive_file_id} result={c} rank={i + 1} />
+                    <CandidateResultCard key={c.drive_file_id} result={c} rank={i + 1} jdTitle={result.jd.title} />
                   ))}
                 </div>
               )}
