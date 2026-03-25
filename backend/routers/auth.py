@@ -12,6 +12,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
@@ -21,6 +22,10 @@ import httpx
 from database import get_db
 from models import User
 from schemas import TokenResponse, UserOut
+
+# Load .env before reading any env vars — routers are imported
+# before main.py's load_dotenv() runs, so we need it here too.
+load_dotenv()
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -34,7 +39,7 @@ ALGORITHM            = os.getenv("ALGORITHM", "HS256")
 TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
 
 GOOGLE_TOKEN_URL   = "https://oauth2.googleapis.com/token"
-GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo"
+GOOGLE_USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo"
 
 
 # ─────────────────────────────────────────────────────────────
@@ -86,6 +91,12 @@ def google_login():
     Build the Google OAuth URL with required scopes and
     redirect the browser there.
     """
+    if not GOOGLE_CLIENT_ID:
+        raise HTTPException(
+            status_code=500,
+            detail="GOOGLE_CLIENT_ID is not configured. Check backend/.env"
+        )
+
     scopes = "openid email profile https://www.googleapis.com/auth/drive.readonly"
     url = (
         "https://accounts.google.com/o/oauth2/v2/auth"
@@ -107,10 +118,9 @@ async def google_callback(code: str, db: Session = Depends(get_db)):
     """
     Exchange the authorization code for Google tokens,
     fetch user info, upsert user in DB, mint our JWT,
-    then redirect the frontend with the token in the URL.
+    then redirect the browser to the React frontend with ?token=JWT.
     """
     async with httpx.AsyncClient() as client:
-        # Exchange code for tokens
         token_response = await client.post(GOOGLE_TOKEN_URL, data={
             "code":          code,
             "client_id":     GOOGLE_CLIENT_ID,
@@ -126,7 +136,6 @@ async def google_callback(code: str, db: Session = Depends(get_db)):
         access_token  = token_data.get("access_token")
         refresh_token = token_data.get("refresh_token")
 
-        # Fetch user profile from Google
         user_response = await client.get(
             GOOGLE_USERINFO_URL,
             headers={"Authorization": f"Bearer {access_token}"},
@@ -134,15 +143,15 @@ async def google_callback(code: str, db: Session = Depends(get_db)):
         user_info = user_response.json()
 
     # Upsert user in database
-    user = db.query(User).filter(User.google_id == user_info["id"]).first()
+    user = db.query(User).filter(User.google_id == user_info.get("sub")).first()
     if user:
         user.access_token  = access_token
         user.refresh_token = refresh_token or user.refresh_token
         user.avatar_url    = user_info.get("picture")
     else:
         user = User(
-            google_id     = user_info["id"],
-            email         = user_info["email"],
+            google_id     = user_info.get("sub"),
+            email         = user_info.get("email"),
             name          = user_info.get("name"),
             avatar_url    = user_info.get("picture"),
             access_token  = access_token,
@@ -153,8 +162,9 @@ async def google_callback(code: str, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(user)
 
-    # Mint our JWT and redirect frontend
     jwt_token = create_access_token({"sub": str(user.id)})
+    # Redirect the browser back to the React frontend with the JWT in the URL.
+    # The frontend AuthCallbackPage reads ?token= and stores it.
     return RedirectResponse(f"{FRONTEND_URL}/auth/callback?token={jwt_token}")
 
 

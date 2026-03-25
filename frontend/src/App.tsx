@@ -1,22 +1,17 @@
 // src/App.tsx
 // ────────────
-// Root component that defines all client-side routes.
+// Root component — defines all client-side routes.
 
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAuth } from './context/AuthContext'
 import Layout from './components/Layout'
 import LoginPage from './pages/LoginPage'
 import AuthCallbackPage from './pages/AuthCallbackPage'
+import HomePage from './pages/HomePage'
 import DashboardPage from './pages/DashboardPage'
-import CandidatesPage from './pages/CandidatesPage'
 import JobsPage from './pages/JobsPage'
-import MatchingPage from './pages/MatchingPage'
-import ResultsPage from './pages/ResultsPage'
+import PipelinePage from './pages/PipelinePage'
 
-/**
- * ProtectedRoute: redirect to login if not authenticated.
- * Shows a spinner while the auth state is being restored from localStorage.
- */
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useAuth()
 
@@ -34,11 +29,11 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 export default function App() {
   return (
     <Routes>
-      {/* ── Public routes ──────────────────────────────── */}
+      {/* ── Public ───────────────────────────────── */}
       <Route path="/"               element={<LoginPage />} />
       <Route path="/auth/callback"  element={<AuthCallbackPage />} />
 
-      {/* ── Protected routes (require login) ───────────── */}
+      {/* ── Protected ────────────────────────────── */}
       <Route
         path="/app"
         element={
@@ -47,16 +42,13 @@ export default function App() {
           </ProtectedRoute>
         }
       >
-        {/* Nested under Layout (sidebar + topbar) */}
-        <Route index              element={<Navigate to="dashboard" replace />} />
-        <Route path="dashboard"   element={<DashboardPage />} />
-        <Route path="candidates"  element={<CandidatesPage />} />
-        <Route path="jobs"        element={<JobsPage />} />
-        <Route path="matching"    element={<MatchingPage />} />
-        <Route path="results/:jobId" element={<ResultsPage />} />
+        <Route index            element={<Navigate to="home" replace />} />
+        <Route path="home"      element={<HomePage />} />
+        <Route path="dashboard" element={<DashboardPage />} />
+        <Route path="jobs"      element={<JobsPage />} />
+        <Route path="pipeline"  element={<PipelinePage />} />
       </Route>
 
-      {/* ── Fallback ────────────────────────────────────── */}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )

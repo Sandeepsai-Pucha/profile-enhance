@@ -1,6 +1,6 @@
 // src/types.ts
 // ─────────────
-// Shared TypeScript interfaces mirroring the Pydantic schemas.
+// TypeScript interfaces mirroring backend Pydantic schemas.
 
 export interface User {
   id: number
@@ -10,63 +10,87 @@ export interface User {
   created_at: string
 }
 
-export interface CandidateProfile {
-  id: number
-  name: string
-  email: string
-  phone: string | null
-  current_role: string | null
-  experience_years: number
-  skills: string[]
-  education: string | null
-  summary: string | null
-  resume_text: string | null
-  drive_file_id: string | null
-  drive_file_url: string | null
-  is_active: boolean
-  created_at: string
-}
-
+// ── Job Description (persisted) ───────────────────────────────
 export interface JobDescription {
   id: number
   title: string
   company: string | null
   jd_text: string
-  required_skills: string[]
+  required_skills:     string[]
+  nice_to_have_skills: string[]
   experience_min: number
   experience_max: number
+  education_required:  string | null
+  employment_type:     string | null
+  location:            string | null
+  responsibilities:    string[]
+  benefits:            string[]
+  salary_range:        string | null
+  jd_summary:          string | null
   uploaded_by: number | null
   created_at: string
 }
 
+// ── Pipeline (all ephemeral) ──────────────────────────────────
+export interface WorkHistoryItem {
+  title:            string | null
+  company:          string | null
+  duration:         string | null
+  responsibilities: string[]
+}
+
+export interface ParsedResume {
+  name:             string
+  email:            string | null
+  phone:            string | null
+  current_role:     string | null
+  experience_years: number
+  skills:           string[]
+  education:        string | null
+  certifications:   string[]
+  work_history:     WorkHistoryItem[]
+  summary:          string | null
+}
+
 export interface InterviewQuestion {
-  question: string
-  category: 'Technical' | 'Gap' | 'Behavioural' | 'Situational'
+  question:   string
+  category:   'Technical' | 'Gap' | 'Behavioural' | 'Situational'
   difficulty: 'Easy' | 'Medium' | 'Hard'
 }
 
-export interface MatchResult {
-  id: number
-  job_id: number
-  candidate_id: number
-  candidate: CandidateProfile
-  match_score: number
+export interface CandidateMatchResult {
+  file_name:      string
+  drive_file_id:  string
+  drive_file_url: string
+  parsed_resume:  ParsedResume
+  match_score:    number
   matched_skills: string[]
   missing_skills: string[]
-  ai_summary: string | null
-  interview_questions: InterviewQuestion[]
-  created_at: string
+  extra_skills:   string[]
+  experience_match: 'Under-qualified' | 'Good fit' | 'Over-qualified'
+  ai_summary:     string
+  improvement_suggestions: string[]
+  interview_questions:     InterviewQuestion[]
 }
 
-export interface MatchResponse {
-  job: JobDescription
-  results: MatchResult[]
-  total_candidates_evaluated: number
+export interface PipelineStats {
+  total_files_found:     number
+  total_parsed:          number
+  total_above_threshold: number
+  processing_time_secs:  number
 }
 
-export interface SkillCategory {
-  id: number
-  category: string
-  skills: string[]
-  roles: string[]
+export interface PipelineRequest {
+  jd_id:           number
+  drive_folder_id?: string
+  top_n?:          number
+  min_score?:      number
+}
+
+export interface PipelineResponse {
+  jd:                JobDescription
+  top_candidates:    CandidateMatchResult[]
+  executive_summary: string
+  stats:             PipelineStats
+  errors:            string[]
 }

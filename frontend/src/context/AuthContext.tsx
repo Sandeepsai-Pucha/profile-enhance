@@ -11,15 +11,15 @@ interface AuthContextType {
   user: User | null               // null = not logged in
   token: string | null
   isLoading: boolean              // true while validating stored token
-  login: (token: string) => void  // called after OAuth callback
+  login: (token: string) => any  // called after OAuth callback
   logout: () => void
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser]       = useState<User | null>(null)
-  const [token, setToken]     = useState<string | null>(null)
+  const [user, setUser] = useState<User | null>(null)
+  const [token, setToken] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
   // ── On mount: restore session from localStorage ──────────────
