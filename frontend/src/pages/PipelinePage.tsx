@@ -3,8 +3,8 @@
 // Run the full 9-step resume matching pipeline for a selected JD.
 // No candidate data is stored — everything is live and ephemeral.
 
-import { useState, useEffect } from 'react'
-import { useSearchParams, Link } from 'react-router-dom'
+import { useState, useEffect, useRef } from 'react'
+import { useSearchParams, Link, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import {
   Cpu, FileText, AlertCircle, CheckCircle2, Clock,
@@ -34,9 +34,9 @@ function StepList({ currentStep }: { currentStep: number }) {
       {STEPS.map((step, i) => (
         <div key={i} className="flex items-center gap-3">
           <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0
-            ${i < currentStep  ? 'bg-green-500'
-            : i === currentStep ? 'bg-cyan-400 animate-pulse'
-            : 'bg-slate-200'}`}>
+            ${i < currentStep ? 'bg-green-500'
+              : i === currentStep ? 'bg-cyan-400 animate-pulse'
+                : 'bg-slate-200'}`}>
             {i < currentStep ? (
               <CheckCircle2 size={12} className="text-white" />
             ) : (
@@ -56,19 +56,27 @@ function StepList({ currentStep }: { currentStep: number }) {
 
 export default function PipelinePage() {
   const [searchParams] = useSearchParams()
-  const preselectedJdId     = searchParams.get('jd')     ? Number(searchParams.get('jd')) : null
-  const preselectedFolder   = searchParams.get('folder') || import.meta.env.VITE_DEFAULT_DRIVE_FOLDER_ID || ''
+  const navigate = useNavigate()
+  const preselectedJdId = searchParams.get('jd') ? Number(searchParams.get('jd')) : null
+  const preselectedFolder = searchParams.get('folder') || import.meta.env.VITE_DEFAULT_DRIVE_FOLDER_ID || ''
 
-  const [selectedJdId, setSelectedJdId]     = useState<number | null>(preselectedJdId)
-  const [driveFolderId, setDriveFolderId]   = useState(preselectedFolder)
-  const [topN,          setTopN]            = useState(5)
-  const [minScore,      setMinScore]        = useState(40)
-  const [currentStep,   setCurrentStep]     = useState(-1)
-  const [result,        setResult]          = useState<PipelineResponse | null>(null)
+  const [selectedJdId, setSelectedJdId] = useState<number | null>(preselectedJdId)
+  const [driveFolderId, setDriveFolderId] = useState(preselectedFolder)
+  // Folder name search state
+  const [folderResults, setFolderResults] = useState<{ id: string; name: string }[]>([])
+  const [folderName, setFolderName] = useState('')
+  const [folderSearching, setFolderSearching] = useState(false)
+  const [showDropdown, setShowDropdown] = useState(false)
+  const folderDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const [topN, setTopN] = useState(5)
+  const [minScore, setMinScore] = useState(40)
+  const [currentStep, setCurrentStep] = useState(-1)
+  const [result, setResult] = useState<PipelineResponse | null>(null)
 
   const { data: jds = [], isLoading: jdsLoading } = useQuery<JobDescription[]>({
     queryKey: ['jds'],
-    queryFn:  fetchJDs,
+    queryFn: fetchJDs,
   })
 
   // Auto-select preselected JD
@@ -86,10 +94,10 @@ export default function PipelinePage() {
 
   const mutation = useMutation({
     mutationFn: () => runPipeline({
-      jd_id:           selectedJdId!,
+      jd_id: selectedJdId!,
       drive_folder_id: driveFolderId || undefined,
-      top_n:           topN,
-      min_score:       minScore,
+      top_n: topN,
+      min_score: minScore,
     }),
     onMutate: () => {
       setCurrentStep(0)
@@ -99,6 +107,7 @@ export default function PipelinePage() {
       setCurrentStep(STEPS.length)  // mark all done
       setResult(data)
       toast.success(`Pipeline complete — ${data.top_candidates.length} top candidate${data.top_candidates.length !== 1 ? 's' : ''} found!`)
+      navigate('/app/results', { state: { result: data } })
     },
     onError: (e: any) => {
       setCurrentStep(-1)
@@ -127,7 +136,7 @@ export default function PipelinePage() {
 
   return (
     <div className="space-y-6">
-      <BackButton to="/app/jobs" label="Back to Jobs" />
+      <BackButton to="/app/home" label="Back to Home" />
       <div>
         <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
           <Cpu size={24} /> Resume Matching Pipeline
@@ -283,10 +292,10 @@ export default function PipelinePage() {
               {/* Stats bar */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 {[
-                  { icon: FileText,    label: 'Files Found',  value: result.stats.total_files_found },
-                  { icon: Users,       label: 'Parsed',       value: result.stats.total_parsed },
-                  { icon: BarChart3,   label: 'Above Threshold', value: result.stats.total_above_threshold },
-                  { icon: Clock,       label: 'Time (secs)',  value: result.stats.processing_time_secs.toFixed(1) },
+                  { icon: FileText, label: 'Files Found', value: result.stats.total_files_found },
+                  { icon: Users, label: 'Parsed', value: result.stats.total_parsed },
+                  { icon: BarChart3, label: 'Above Threshold', value: result.stats.total_above_threshold },
+                  { icon: Clock, label: 'Time (secs)', value: result.stats.processing_time_secs.toFixed(1) },
                 ].map(({ icon: Icon, label, value }) => (
                   <div key={label} className="bg-white border border-slate-200 rounded-xl p-3 text-center">
                     <Icon size={18} className="mx-auto text-sky-500 mb-1" />

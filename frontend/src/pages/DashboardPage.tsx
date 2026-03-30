@@ -13,23 +13,23 @@ export default function DashboardPage() {
 
   const { data: jds = [], isLoading } = useQuery<JobDescription[]>({
     queryKey: ['jds'],
-    queryFn:  fetchJDs,
+    queryFn: fetchJDs,
   })
 
   const totalSkills = [...new Set(jds.flatMap((j) => j.required_skills))].length
   const remoteCount = jds.filter((j) => j.location?.toLowerCase().includes('remote')).length
 
   const STATS = [
-    { label: 'Job Descriptions',     value: jds.length,                      icon: FileText, color: 'bg-sky-50 text-blue-900', link: '/app/jobs'     },
-    { label: 'Unique Required Skills',value: totalSkills,                     icon: Cpu,      color: 'bg-green-50  text-green-700',  link: '/app/jobs'     },
-    { label: 'Remote Roles',          value: remoteCount,                     icon: Play,     color: 'bg-pink-50   text-pink-700',   link: '/app/jobs'     },
-    { label: 'Pipeline Ready',        value: jds.length > 0 ? 'Yes' : 'No',  icon: Upload,   color: 'bg-amber-50  text-amber-600',  link: '/app/pipeline' },
+    { label: 'Job Descriptions', value: jds.length, icon: FileText, color: 'bg-sky-50 text-blue-900', link: '/app/jobs' },
+    { label: 'Unique Required Skills', value: totalSkills, icon: Cpu, color: 'bg-green-50  text-green-700', link: '/app/jobs' },
+    { label: 'Remote Roles', value: remoteCount, icon: Play, color: 'bg-pink-50   text-pink-700', link: '/app/jobs' },
+    { label: 'Pipeline Ready', value: jds.length > 0 ? 'Yes' : 'No', icon: Upload, color: 'bg-amber-50  text-amber-600', link: '/app/pipeline' },
   ]
 
   const QUICK_ACTIONS = [
-    { label: 'Upload a Job Description', to: '/app/jobs',     emoji: '📄' },
-    { label: 'Run Resume Pipeline',      to: '/app/pipeline', emoji: '🤖' },
-    { label: 'Go to Home',               to: '/app/home',     emoji: '🏠' },
+    { label: 'Upload a Job Description', to: '/app/jobs', emoji: '📄' },
+    { label: 'Run Resume Pipeline', to: '/app/pipeline', emoji: '🤖' },
+    { label: 'Go to Home', to: '/app/home', emoji: '🏠' },
   ]
 
   return (
@@ -140,13 +140,13 @@ export default function DashboardPage() {
         <h3 className="font-semibold text-slate-700 mb-4">How Skillify Works</h3>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center text-sm">
           {[
-            { step: '01', title: 'Sign in',     desc: 'Google OAuth — grants Drive access'       },
-            { step: '02', title: 'Upload JD',   desc: 'Paste or upload — AI extracts structure'  },
-            { step: '03', title: 'Run Pipeline',desc: 'Fetches & parses all Drive resumes with AI'},
-            { step: '04', title: 'Get Results', desc: 'Ranked candidates, gaps & interview Qs'   },
+            { step: '01', title: 'Sign in', desc: 'Google OAuth — grants Drive access' },
+            { step: '02', title: 'Upload JD', desc: 'Paste or upload — AI extracts structure' },
+            { step: '03', title: 'Run Pipeline', desc: 'Fetches & parses all Drive resumes with AI' },
+            { step: '04', title: 'Get Results', desc: 'Ranked candidates, gaps & interview Questions' },
           ].map(({ step, title, desc }) => (
             <div key={step} className="bg-slate-50 rounded-xl p-4">
-              <div className="text-3xl font-black text-sky-200 mb-2">{step}</div>
+              <div className="text-3xl font-black text-black-500 mb-2">{step}</div>
               <p className="font-bold text-slate-700">{title}</p>
               <p className="text-slate-500 text-xs mt-1">{desc}</p>
             </div>

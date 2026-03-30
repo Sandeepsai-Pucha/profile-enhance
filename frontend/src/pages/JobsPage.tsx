@@ -17,9 +17,9 @@ type UploadMode = 'text' | 'file'
 function Pill({ label, color = 'purple' }: { label: string; color?: string }) {
   const styles: Record<string, string> = {
     purple: 'bg-sky-50 text-blue-900 border border-sky-200',
-    green:  'bg-green-50  text-green-700  border border-green-200',
-    slate:  'bg-slate-100 text-slate-600',
-    amber:  'bg-amber-50  text-amber-700  border border-amber-200',
+    green: 'bg-green-50  text-green-700  border border-green-200',
+    slate: 'bg-slate-100 text-slate-600',
+    amber: 'bg-amber-50  text-amber-700  border border-amber-200',
   }
   return (
     <span className={`inline-block text-xs px-2 py-0.5 rounded-full font-medium ${styles[color] ?? styles.purple}`}>
@@ -34,8 +34,8 @@ function JDCard({ jd, onDelete, onMatch }: {
   const [expanded, setExpanded] = useState(false)
   const expLabel =
     jd.experience_min === 0 && jd.experience_max >= 99 ? 'Not specified'
-    : jd.experience_max >= 99 ? `${jd.experience_min}+ yrs`
-    : `${jd.experience_min}–${jd.experience_max} yrs`
+      : jd.experience_max >= 99 ? `${jd.experience_min}+ yrs`
+        : `${jd.experience_min}–${jd.experience_max} yrs`
 
   return (
     <div className="bg-white border border-slate-200 rounded-2xl shadow-sm hover:shadow-md transition-shadow">
@@ -49,10 +49,10 @@ function JDCard({ jd, onDelete, onMatch }: {
               )}
             </div>
             <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500 mb-3">
-              {jd.location       && <span className="flex items-center gap-1"><MapPin size={11} />{jd.location}</span>}
+              {jd.location && <span className="flex items-center gap-1"><MapPin size={11} />{jd.location}</span>}
               {jd.employment_type && <span className="flex items-center gap-1"><Clock size={11} />{jd.employment_type}</span>}
               <span className="flex items-center gap-1"><Star size={11} />{expLabel} exp</span>
-              {jd.salary_range   && <span className="flex items-center gap-1"><DollarSign size={11} />{jd.salary_range}</span>}
+              {jd.salary_range && <span className="flex items-center gap-1"><DollarSign size={11} />{jd.salary_range}</span>}
               {jd.education_required && <span className="flex items-center gap-1"><GraduationCap size={11} />{jd.education_required}</span>}
             </div>
             {jd.jd_summary && (
@@ -69,20 +69,14 @@ function JDCard({ jd, onDelete, onMatch }: {
               </div>
             )}
           </div>
-          <div className="flex flex-col gap-2 shrink-0">
+          <div className="flex gap-2 shrink-0">
             <button onClick={onMatch}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-900 text-white
                          rounded-lg text-xs font-semibold hover:bg-blue-950 transition-colors">
               <Cpu size={13} /> Run Pipeline
             </button>
-            <button onClick={() => setExpanded(!expanded)}
-              className="flex items-center gap-1 px-3 py-1.5 border border-slate-200
-                         text-slate-600 rounded-lg text-xs hover:bg-slate-50 transition-colors">
-              {expanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-              {expanded ? 'Less' : 'More'}
-            </button>
             <button onClick={onDelete}
-              className="p-1.5 text-slate-300 hover:text-red-500 transition-colors self-center">
+              className="p-1.5 text-red-500 hover:text-red-500 transition-colors self-center">
               <Trash2 size={14} />
             </button>
           </div>
@@ -120,15 +114,15 @@ function JDCard({ jd, onDelete, onMatch }: {
 }
 
 export default function JobsPage() {
-  const qc       = useQueryClient()
+  const qc = useQueryClient()
   const navigate = useNavigate()
-  const fileRef  = useRef<HTMLInputElement>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
 
-  const [mode,     setMode]     = useState<UploadMode>('text')
-  const [title,    setTitle]    = useState('')
-  const [company,  setCompany]  = useState('')
-  const [jdText,   setJdText]   = useState('')
-  const [file,     setFile]     = useState<File | null>(null)
+  const [mode, setMode] = useState<UploadMode>('text')
+  const [title, setTitle] = useState('')
+  const [company, setCompany] = useState('')
+  const [jdText, setJdText] = useState('')
+  const [file, setFile] = useState<File | null>(null)
   const [showForm, setShowForm] = useState(false)
   const [dragOver, setDragOver] = useState(false)
 
@@ -143,29 +137,29 @@ export default function JobsPage() {
 
   const createMutation = useMutation({
     mutationFn: () => createJD({ title, company: company || undefined, jd_text: jdText }),
-    onSuccess:  (jd) => { toast.success('JD saved & parsed! Launching pipeline…'); qc.invalidateQueries({ queryKey: ['jds'] }); resetForm(); goToPipeline(jd.id) },
-    onError:    (e: any) => toast.error(e?.response?.data?.detail || 'Failed to save JD'),
+    onSuccess: (jd) => { toast.success('JD saved & parsed! Launching pipeline…'); qc.invalidateQueries({ queryKey: ['jds'] }); resetForm(); goToPipeline(jd.id) },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Failed to save JD'),
   })
 
   const uploadMutation = useMutation({
     mutationFn: () => uploadJDFile(file!, title, company || undefined),
-    onSuccess:  (jd) => { toast.success('File uploaded & parsed! Launching pipeline…'); qc.invalidateQueries({ queryKey: ['jds'] }); resetForm(); goToPipeline(jd.id) },
-    onError:    (e: any) => toast.error(e?.response?.data?.detail || 'Failed to parse file'),
+    onSuccess: (jd) => { toast.success('File uploaded & parsed! Launching pipeline…'); qc.invalidateQueries({ queryKey: ['jds'] }); resetForm(); goToPipeline(jd.id) },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Failed to parse file'),
   })
 
   const deleteMutation = useMutation({
     mutationFn: (id: number) => deleteJD(id),
-    onSuccess:  () => { qc.invalidateQueries({ queryKey: ['jds'] }); toast.success('JD deleted') },
-    onError:    () => toast.error('Delete failed'),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['jds'] }); toast.success('JD deleted') },
+    onError: () => toast.error('Delete failed'),
   })
 
   const resetForm = () => { setTitle(''); setCompany(''); setJdText(''); setFile(null); setShowForm(false) }
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (!title.trim())                       { toast.error('Job title is required'); return }
-    if (mode === 'text' && !jdText.trim())   { toast.error('JD text is required');   return }
-    if (mode === 'file' && !file)            { toast.error('Please select a file');  return }
+    if (!title.trim()) { toast.error('Job title is required'); return }
+    if (mode === 'text' && !jdText.trim()) { toast.error('JD text is required'); return }
+    if (mode === 'file' && !file) { toast.error('Please select a file'); return }
     mode === 'file' ? uploadMutation.mutate() : createMutation.mutate()
   }
 

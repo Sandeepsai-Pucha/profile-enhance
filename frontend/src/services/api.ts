@@ -3,7 +3,12 @@
 // Axios instance + all API call helpers.
 
 import axios from "axios";
-import type { PipelineRequest, PipelineResponse } from "../types";
+import type {
+  PipelineRequest,
+  PipelineResponse,
+  SendReportRequest,
+  SendReportResponse,
+} from "../types";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
@@ -40,43 +45,46 @@ api.interceptors.response.use(
 // ══════════════════════════════════════════════════════════════
 
 export const getGoogleLoginUrl = (): string => {
-  const clientId   = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+  const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
   const redirectUri = `http://localhost:8000/auth/google/callback`;
   const scopes = [
-    "openid", "email", "profile",
+    "openid",
+    "email",
+    "profile",
     "https://www.googleapis.com/auth/drive.readonly",
+    "https://www.googleapis.com/auth/gmail.send",
   ].join(" ");
 
   const params = new URLSearchParams({
-    client_id:     clientId,
-    redirect_uri:  redirectUri,
+    client_id: clientId,
+    redirect_uri: redirectUri,
     response_type: "code",
-    scope:         scopes,
-    access_type:   "offline",
-    prompt:        "select_account",
+    scope: scopes,
+    access_type: "offline",
+    prompt: "select_account",
   });
 
   return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
 };
 
-export const fetchCurrentUser = () =>
-  api.get("/auth/me").then((r) => r.data);
+export const fetchCurrentUser = () => api.get("/auth/me").then((r) => r.data);
 
-export const fetchHome = () =>
-  api.get("/home").then((r) => r.data);
+export const fetchHome = () => api.get("/home").then((r) => r.data);
 
 // ══════════════════════════════════════════════════════════════
 //  JOB DESCRIPTIONS
 // ══════════════════════════════════════════════════════════════
 
-export const fetchJDs = () =>
-  api.get("/jobs/").then((r) => r.data);
+export const fetchJDs = () => api.get("/jobs/").then((r) => r.data);
 
 export const fetchJD = (id: number) =>
   api.get(`/jobs/${id}`).then((r) => r.data);
 
-export const createJD = (data: { title: string; company?: string; jd_text: string }) =>
-  api.post("/jobs/", data).then((r) => r.data);
+export const createJD = (data: {
+  title: string;
+  company?: string;
+  jd_text: string;
+}) => api.post("/jobs/", data).then((r) => r.data);
 
 export const uploadJDFile = (file: File, title: string, company?: string) => {
   const form = new FormData();
@@ -90,8 +98,7 @@ export const uploadJDFile = (file: File, title: string, company?: string) => {
     .then((r) => r.data);
 };
 
-export const deleteJD = (id: number) =>
-  api.delete(`/jobs/${id}`);
+export const deleteJD = (id: number) => api.delete(`/jobs/${id}`);
 
 // ══════════════════════════════════════════════════════════════
 //  PIPELINE
@@ -101,7 +108,18 @@ export const deleteJD = (id: number) =>
  * Run the full 9-step resume matching pipeline for a given JD.
  * Returns ranked candidates with scores, suggestions, and interview questions.
  */
-export const runPipeline = (payload: PipelineRequest): Promise<PipelineResponse> =>
+export const runPipeline = (
+  payload: PipelineRequest,
+): Promise<PipelineResponse> =>
   api.post("/pipeline/run", payload).then((r) => r.data);
+
+// ══════════════════════════════════════════════════════════════
+//  EMAIL
+// ══════════════════════════════════════════════════════════════
+
+export const sendReportEmail = (
+  payload: SendReportRequest,
+): Promise<SendReportResponse> =>
+  api.post("/email/send-report", payload).then((r) => r.data);
 
 export default api;
