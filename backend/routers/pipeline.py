@@ -33,16 +33,83 @@ from schemas import (
     PipelineStats, JDOut,
 )
 from routers.auth import get_current_user
-from services.ai_service import (
-    parse_resume,
-    match_resume_to_jd,
-    generate_improvement_suggestions,
-    generate_interview_questions,
-    generate_executive_summary,
-)
-from services.google_drive_service import fetch_all_resumes
+import os as _os
+_AI_PROVIDER = _os.getenv("AI_PROVIDER", "claude").lower()
+if _AI_PROVIDER == "claude":
+    from services.claude_service import (
+        parse_resume,
+        match_resume_to_jd,
+        generate_improvement_suggestions,
+        generate_interview_questions,
+        generate_executive_summary,
+    )
+elif _AI_PROVIDER == "ollama":
+    from services.ollama_service import (
+        parse_resume,
+        match_resume_to_jd,
+        generate_improvement_suggestions,
+        generate_interview_questions,
+        generate_executive_summary,
+    )
+elif _AI_PROVIDER == "groq":
+    from services.groq_service import (
+        parse_resume,
+        match_resume_to_jd,
+        generate_improvement_suggestions,
+        generate_interview_questions,
+        generate_executive_summary,
+    )
+else:
+    from services.ai_service import (
+        parse_resume,
+        match_resume_to_jd,
+        generate_improvement_suggestions,
+        generate_interview_questions,
+        generate_executive_summary,
+    )
+from services.google_drive_service import fetch_all_resumes, search_folders
 
 router = APIRouter(prefix="/pipeline", tags=["Pipeline"])
+
+
+# ─────────────────────────────────────────────────────────────
+# LOCAL RESUME LOADER  (USE_LOCAL_RESUMES=true)
+# Reads a .txt file where profiles are separated by ===RESUME N===
+# Returns the same file_meta structure as fetch_all_resumes
+# ─────────────────────────────────────────────────────────────
+def _load_local_resumes(file_path: str) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """
+    Parse a local text file containing multiple resumes separated by ===RESUME N===.
+    Returns (resumes, errors) in the same shape as fetch_all_resumes().
+    """
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            raw = f.read()
+    except FileNotFoundError:
+        return [], [f"Local resumes file not found: {file_path}"]
+    except Exception as e:
+        return [], [f"Failed to read local resumes file: {e}"]
+
+    import re as _re
+    # Split on ===RESUME N=== markers
+    parts = _re.split(r"===RESUME\s*\d+===", raw, flags=_re.IGNORECASE)
+    resumes = []
+    for i, part in enumerate(parts):
+        text = part.strip()
+        if not text:
+            continue
+        # Extract a name from first non-empty line for display
+        first_line = next((l.strip() for l in text.splitlines() if l.strip()), f"Candidate {i}")
+        name = first_line.replace("Name:", "").strip() if first_line.lower().startswith("name:") else first_line
+        resumes.append({
+            "id":          f"local-{i}",
+            "name":        f"{name}.txt",
+            "text":        text,
+            "webViewLink": "",
+        })
+
+    print(f"[Pipeline] Loaded {len(resumes)} resume(s) from local file: {file_path}")
+    return resumes, []
 
 
 # ─────────────────────────────────────────────────────────────
@@ -158,26 +225,36 @@ def run_pipeline(
         print(f"[Pipeline] WARNING: JD '{jd_obj.title}' has no required_skills. "
               "Raw text will be used as fallback context for matching.")
 
-    # ── Step 2: Fetch resumes from Drive ─────────────────────
-    if not current_user.access_token:
-        raise HTTPException(
-            status_code=403,
-            detail="No Google Drive access token. Please sign out and sign in again.",
+    # ── Step 2: Fetch resumes ─────────────────────────────────
+    use_local = _os.getenv("USE_LOCAL_RESUMES", "false").lower() == "true"
+
+    if use_local:
+        # Load from local sample file instead of Drive (testing / token-saving mode)
+        local_file = _os.getenv("LOCAL_RESUMES_FILE", "../sample-resumes.txt")
+        local_path = _os.path.join(_os.path.dirname(__file__), "..", local_file)
+        local_path = _os.path.normpath(local_path)
+        resumes, fetch_errors = _load_local_resumes(local_path)
+    else:
+        if not current_user.access_token:
+            raise HTTPException(
+                status_code=403,
+                detail="No Google Drive access token. Please sign out and sign in again.",
+            )
+        resumes, fetch_errors = fetch_all_resumes(
+            current_user.access_token,
+            payload.drive_folder_id,
         )
 
-    resumes, fetch_errors = fetch_all_resumes(
-        current_user.access_token,
-        payload.drive_folder_id,
-    )
     errors.extend(fetch_errors)
 
     if not resumes:
-        raise HTTPException(
-            status_code=404,
-            detail="No resume files found in Google Drive. "
-                   "Upload PDF/DOCX/TXT resumes and try again, "
-                   "or specify a drive_folder_id.",
+        detail = (
+            "No resume files found in local sample file." if use_local
+            else "No resume files found in Google Drive. Upload PDF/DOCX/TXT resumes and try again."
         )
+        if fetch_errors:
+            detail += " Errors: " + "; ".join(fetch_errors)
+        raise HTTPException(status_code=404, detail=detail)
 
     # ── Steps 3+4: Parse + match all resumes (parallel) ──────
     all_results: List[CandidateMatchResult] = []
