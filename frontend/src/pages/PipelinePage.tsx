@@ -3,12 +3,12 @@
 // Run the full 9-step resume matching pipeline for a selected JD.
 // No candidate data is stored — everything is live and ephemeral.
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { useSearchParams, Link, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import {
   Cpu, FileText, AlertCircle, CheckCircle2, Clock,
-  Users, BarChart3, ChevronDown, FolderOpen,
+  Users, BarChart3, ChevronDown, FileSearch,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { fetchJDs, runPipeline } from '../services/api'
@@ -19,7 +19,7 @@ import BackButton from '../components/BackButton'
 // ── Pipeline step indicator ───────────────────────────────────
 const STEPS = [
   'Loading JD',
-  'Fetching resumes from Drive',
+  'Reading resumes from local file',
   'Parsing resumes with AI',
   'Matching against JD',
   'Filtering top candidates',
@@ -58,16 +58,7 @@ export default function PipelinePage() {
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
   const preselectedJdId = searchParams.get('jd') ? Number(searchParams.get('jd')) : null
-  const preselectedFolder = searchParams.get('folder') || import.meta.env.VITE_DEFAULT_DRIVE_FOLDER_ID || ''
-
   const [selectedJdId, setSelectedJdId] = useState<number | null>(preselectedJdId)
-  const [driveFolderId, setDriveFolderId] = useState(preselectedFolder)
-  // Folder name search state
-  const [folderResults, setFolderResults] = useState<{ id: string; name: string }[]>([])
-  const [folderName, setFolderName] = useState('')
-  const [folderSearching, setFolderSearching] = useState(false)
-  const [showDropdown, setShowDropdown] = useState(false)
-  const folderDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const [topN, setTopN] = useState(5)
   const [minScore, setMinScore] = useState(40)
@@ -95,7 +86,6 @@ export default function PipelinePage() {
   const mutation = useMutation({
     mutationFn: () => runPipeline({
       jd_id: selectedJdId!,
-      drive_folder_id: driveFolderId || undefined,
       top_n: topN,
       min_score: minScore,
     }),
@@ -142,7 +132,7 @@ export default function PipelinePage() {
           <Cpu size={24} /> Resume Matching Pipeline
         </h2>
         <p className="text-slate-500 text-sm mt-1">
-          Fetches resumes from your Google Drive, parses them with AI, matches against the JD, and ranks candidates.
+          Reads resumes from the local file, parses them with AI, matches against the JD, and ranks candidates.
         </p>
       </div>
 
@@ -174,25 +164,13 @@ export default function PipelinePage() {
               </div>
             </div>
 
-            {/* Drive folder */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">
-                Drive Folder ID <span className="font-normal text-slate-400">(optional)</span>
-              </label>
-              <div className="relative">
-                <FolderOpen size={14} className="absolute left-3 top-3 text-slate-400" />
-                <input
-                  type="text"
-                  placeholder="Leave blank to search entire Drive"
-                  value={driveFolderId}
-                  onChange={(e) => setDriveFolderId(e.target.value)}
-                  className="w-full border border-slate-300 rounded-lg pl-8 pr-3 py-2.5 text-sm
-                             focus:outline-none focus:ring-2 focus:ring-sky-500"
-                />
+            {/* Local file indicator */}
+            <div className="flex items-center gap-2.5 bg-sky-50 border border-sky-200 rounded-lg px-3 py-2.5">
+              <FileSearch size={15} className="text-sky-500 shrink-0" />
+              <div>
+                <p className="text-xs font-semibold text-sky-700">Using local resume file</p>
+                <p className="text-[11px] text-sky-500 mt-0.5">sample-resumes.txt</p>
               </div>
-              <p className="text-xs text-slate-400 mt-1">
-                From the Drive folder URL: /folders/<strong>THIS_PART</strong>
-              </p>
             </div>
 
             {/* Top N */}
@@ -319,7 +297,7 @@ export default function PipelinePage() {
                   <Users size={36} className="mx-auto text-slate-300 mb-3" />
                   <p className="font-semibold text-slate-600">No candidates met the threshold</p>
                   <p className="text-sm text-slate-400 mt-1">
-                    Try lowering the minimum match score or upload more resumes to Drive.
+                    Try lowering the minimum match score or add more profiles to sample-resumes.txt.
                   </p>
                 </div>
               ) : (

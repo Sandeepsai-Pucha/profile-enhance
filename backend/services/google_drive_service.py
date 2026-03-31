@@ -126,6 +126,38 @@ def download_and_parse_resume(
 
 
 # ─────────────────────────────────────────────────────────────
+# SEARCH Drive folders by name (for the folder picker UI)
+# ─────────────────────────────────────────────────────────────
+def search_folders(
+    access_token: str,
+    query: str,
+    page_size: int = 20,
+) -> List[Dict]:
+    """
+    Search for Drive folders whose name contains `query`.
+
+    Returns a list of {id, name} dicts.
+    """
+    try:
+        service = _get_drive_service(access_token)
+        q = (
+            f"mimeType='application/vnd.google-apps.folder' "
+            f"and name contains '{query.replace(chr(39), '')}' "
+            f"and trashed=false"
+        )
+        result = service.files().list(
+            q=q,
+            fields="files(id, name)",
+            pageSize=page_size,
+            orderBy="name",
+        ).execute()
+        return result.get("files", [])
+    except Exception as e:
+        print(f"[Drive] search_folders error: {e}")
+        return []
+
+
+# ─────────────────────────────────────────────────────────────
 # HIGH-LEVEL: fetch all resumes as {file_meta, text} dicts
 # ─────────────────────────────────────────────────────────────
 def fetch_all_resumes(
