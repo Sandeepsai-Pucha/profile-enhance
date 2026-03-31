@@ -9,15 +9,15 @@ import IdleWarningModal from './IdleWarningModal'
 import clsx from 'clsx'
 
 const IDLE_TIMEOUT_MS = 15 * 60 * 1000
-const WARN_AFTER_MS   = 13 * 60 * 1000
-const WARNING_SECS    = 120
+const WARN_AFTER_MS = 13 * 60 * 1000
+const WARNING_SECS = 120
 
 const NAV_ITEMS = [
-  { to: '/app/home',         icon: Home,            label: 'Home'             },
-  { to: '/app/dashboard',    icon: LayoutDashboard, label: 'Dashboard'        },
-  { to: '/app/jobs',         icon: FileText,        label: 'Job Descriptions' },
-  { to: '/app/pipeline',     icon: Cpu,             label: 'Run Pipeline'     },
-  { to: '/app/interviewers', icon: CalendarDays,    label: 'Interviewers'     },
+  { to: '/app/home', icon: Home, label: 'Home' },
+  { to: '/app/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
+  { to: '/app/jobs', icon: FileText, label: 'Job Descriptions' },
+  { to: '/app/pipeline', icon: Cpu, label: 'Run Pipeline' },
+  // { to: '/app/interviewers', icon: CalendarDays,    label: 'Interviewers'     },
 ]
 
 export default function Layout() {

@@ -6,6 +6,9 @@ import axios from "axios";
 import type {
   PipelineRequest,
   PipelineResponse,
+  Interviewer,
+  ScheduleInterviewRequest,
+  ScheduleInterviewResponse,
   SendReportRequest,
   SendReportResponse,
 } from "../types";
@@ -122,7 +125,9 @@ export const sendReportEmail = (
   payload: SendReportRequest,
 ): Promise<SendReportResponse> =>
   api.post("/email/send-report", payload).then((r) => r.data);
-export const searchDriveFolders = (q: string): Promise<{ id: string; name: string }[]> =>
+export const searchDriveFolders = (
+  q: string,
+): Promise<{ id: string; name: string }[]> =>
   api.get("/pipeline/folders", { params: { q } }).then((r) => r.data);
 
 // ══════════════════════════════════════════════════════════════
@@ -133,7 +138,7 @@ export const fetchInterviewers = (): Promise<Interviewer[]> =>
   api.get("/interviews/interviewers").then((r) => r.data);
 
 export const scheduleInterview = (
-  payload: ScheduleInterviewRequest
+  payload: ScheduleInterviewRequest,
 ): Promise<ScheduleInterviewResponse> =>
   api.post("/interviews/schedule", payload).then((r) => r.data);
 

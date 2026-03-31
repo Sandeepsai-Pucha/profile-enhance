@@ -4,11 +4,12 @@
 // No candidate data is stored — everything is live and ephemeral.
 
 import { useState, useEffect, useRef } from 'react'
-import { useSearchParams, Link } from 'react-router-dom'
+import { useSearchParams, Link, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import {
   Cpu, FileText, AlertCircle, CheckCircle2, Clock,
   Users, BarChart3, ChevronDown, FolderOpen, X,
+  FileSearch,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { fetchJDs, runPipeline, searchDriveFolders } from '../services/api'
@@ -76,42 +77,42 @@ export default function PipelinePage() {
   }, [preselectedJdId])
 
   // Folder name search — debounced
-  const handleFolderSearch = (value: string) => {
-    setFolderName(value)
-    setDriveFolderId('')
-    setShowDropdown(true)
-    if (folderDebounceRef.current) clearTimeout(folderDebounceRef.current)
-    if (!value.trim()) {
-      setFolderResults([])
-      setShowDropdown(false)
-      return
-    }
-    folderDebounceRef.current = setTimeout(async () => {
-      setFolderSearching(true)
-      try {
-        const results = await searchDriveFolders(value.trim())
-        setFolderResults(results)
-      } catch {
-        setFolderResults([])
-      } finally {
-        setFolderSearching(false)
-      }
-    }, 400)
-  }
+  // const handleFolderSearch = (value: string) => {
+  //   setFolderName(value)
+  //   setDriveFolderId('')
+  //   setShowDropdown(true)
+  //   if (folderDebounceRef.current) clearTimeout(folderDebounceRef.current)
+  //   if (!value.trim()) {
+  //     setFolderResults([])
+  //     setShowDropdown(false)
+  //     return
+  //   }
+  //   folderDebounceRef.current = setTimeout(async () => {
+  //     setFolderSearching(true)
+  //     try {
+  //       const results = await searchDriveFolders(value.trim())
+  //       setFolderResults(results)
+  //     } catch {
+  //       setFolderResults([])
+  //     } finally {
+  //       setFolderSearching(false)
+  //     }
+  //   }, 400)
+  // }
 
-  const selectFolder = (folder: { id: string; name: string }) => {
-    setDriveFolderId(folder.id)
-    setFolderName(folder.name)
-    setFolderResults([])
-    setShowDropdown(false)
-  }
+  // const selectFolder = (folder: { id: string; name: string }) => {
+  //   setDriveFolderId(folder.id)
+  //   setFolderName(folder.name)
+  //   setFolderResults([])
+  //   setShowDropdown(false)
+  // }
 
-  const clearFolder = () => {
-    setDriveFolderId('')
-    setFolderName('')
-    setFolderResults([])
-    setShowDropdown(false)
-  }
+  // const clearFolder = () => {
+  //   setDriveFolderId('')
+  //   setFolderName('')
+  //   setFolderResults([])
+  //   setShowDropdown(false)
+  // }
 
   // Simulate step progress while the pipeline is running
   useEffect(() => {
