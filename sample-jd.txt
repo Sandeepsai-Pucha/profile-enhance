@@ -1,0 +1,47 @@
+Job Title: Backend Node.js Developer
+Location: Hyderabad, India (Hybrid)
+Experience: 4 Years
+Employment Type: Full-Time
+
+About the Role:
+We are looking for a skilled Backend Node.js Developer with 4 years of hands-on experience to join our engineering team. You will be responsible for building and maintaining scalable server-side applications, RESTful APIs, and integrating with various third-party services.
+
+Required Skills:
+- Node.js (4+ years)
+- Express.js or Fastify framework
+- RESTful API design and development
+- PostgreSQL or MySQL (relational databases)
+- MongoDB or other NoSQL databases
+- JavaScript (ES6+) and TypeScript
+- Git version control
+- JWT authentication and OAuth 2.0
+- Docker and containerization basics
+- Unit and integration testing (Jest, Mocha)
+
+Responsibilities:
+- Design, develop, and maintain high-performance backend services using Node.js
+- Build and document RESTful APIs consumed by web and mobile clients
+- Collaborate with frontend developers, DevOps, and product managers
+- Optimize database queries and ensure data integrity across PostgreSQL and MongoDB
+- Implement authentication, authorization, and security best practices
+- Write clean, testable, and well-documented code
+- Participate in code reviews and contribute to technical design discussions
+- Troubleshoot production issues and ensure 99.9% service uptime
+
+Nice to Have:
+- Experience with AWS (EC2, S3, Lambda, RDS) or GCP
+- Knowledge of message queues (RabbitMQ, Kafka, or Redis Pub/Sub)
+- Familiarity with microservices architecture
+- GraphQL API development
+- CI/CD pipelines (GitHub Actions, Jenkins)
+- Experience with Kubernetes or Docker Compose
+
+Education:
+- Bachelor's degree in Computer Science, Engineering, or related field (or equivalent practical experience)
+
+What We Offer:
+- Competitive salary (₹10–18 LPA based on experience)
+- Flexible hybrid work model
+- Health insurance and wellness benefits
+- Learning and certification budget
+- Collaborative and growth-oriented team culture

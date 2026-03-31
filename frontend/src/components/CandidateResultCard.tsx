@@ -7,9 +7,10 @@ import { useState } from 'react'
 import {
   ChevronDown, ChevronUp, ExternalLink, User,
   CheckCircle, XCircle, Sparkles, MessageSquare, Lightbulb,
-  Briefcase, GraduationCap, Clock,
+  Briefcase, GraduationCap, Clock, CalendarPlus,
 } from 'lucide-react'
 import type { CandidateMatchResult, InterviewQuestion } from '../types'
+import ScheduleInterviewModal from './ScheduleInterviewModal'
 
 // ── Score ring ────────────────────────────────────────────────
 function ScoreRing({ score }: { score: number }) {
@@ -64,11 +65,14 @@ function QuestionItem({ q }: { q: InterviewQuestion }) {
 export default function CandidateResultCard({
   result,
   rank,
+  jdTitle = '',
 }: {
-  result: CandidateMatchResult
-  rank:   number
+  result:   CandidateMatchResult
+  rank:     number
+  jdTitle?: string
 }) {
   const [open, setOpen] = useState(rank === 1) // auto-open top candidate
+  const [scheduleOpen, setScheduleOpen] = useState(false)
   const resume = result.parsed_resume
 
   const expColor =
@@ -124,7 +128,7 @@ export default function CandidateResultCard({
             </div>
           </div>
 
-          {/* Drive link + toggle */}
+          {/* Drive link + schedule button + toggle */}
           <div className="flex items-center gap-2 shrink-0">
             {result.drive_file_url && (
               <a href={result.drive_file_url} target="_blank" rel="noopener noreferrer"
@@ -132,6 +136,14 @@ export default function CandidateResultCard({
                 <ExternalLink size={16} />
               </a>
             )}
+            <button
+              onClick={() => setScheduleOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-cyan-400 hover:bg-cyan-300
+                         text-slate-900 rounded-lg text-xs font-semibold transition-colors"
+              title="Schedule Interview"
+            >
+              <CalendarPlus size={13} /> Schedule
+            </button>
             <button onClick={() => setOpen(!open)}
               className="flex items-center gap-1 px-3 py-1.5 border border-slate-200 rounded-lg
                          text-xs text-slate-600 hover:bg-slate-50 transition-colors">
@@ -270,6 +282,14 @@ export default function CandidateResultCard({
             </div>
           )}
         </div>
+      )}
+
+      {scheduleOpen && (
+        <ScheduleInterviewModal
+          candidate={result}
+          jdTitle={jdTitle}
+          onClose={() => setScheduleOpen(false)}
+        />
       )}
     </div>
   )

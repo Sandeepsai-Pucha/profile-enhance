@@ -52,7 +52,15 @@ export default defineConfig({
         target: 'http://127.0.0.1:8000',
         changeOrigin: true,
       },
+      '/pipeline': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      },
       '/matching': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      },
+      '/interviews': {
         target: 'http://127.0.0.1:8000',
         changeOrigin: true,
       },

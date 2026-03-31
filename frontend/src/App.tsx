@@ -12,6 +12,7 @@ import DashboardPage from './pages/DashboardPage'
 import JobsPage from './pages/JobsPage'
 import PipelinePage from './pages/PipelinePage'
 import ResultsPage from './pages/ResultsPage'
+import InterviewersPage from './pages/InterviewersPage'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useAuth()

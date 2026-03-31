@@ -3,15 +3,15 @@
 // Run the full 9-step resume matching pipeline for a selected JD.
 // No candidate data is stored — everything is live and ephemeral.
 
-import { useState, useEffect } from 'react'
-import { useSearchParams, Link, useNavigate } from 'react-router-dom'
+import { useState, useEffect, useRef } from 'react'
+import { useSearchParams, Link } from 'react-router-dom'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import {
   Cpu, FileText, AlertCircle, CheckCircle2, Clock,
-  Users, BarChart3, ChevronDown, FileSearch,
+  Users, BarChart3, ChevronDown, FolderOpen, X,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { fetchJDs, runPipeline } from '../services/api'
+import { fetchJDs, runPipeline, searchDriveFolders } from '../services/api'
 import type { JobDescription, PipelineResponse } from '../types'
 import CandidateResultCard from '../components/CandidateResultCard'
 import BackButton from '../components/BackButton'
@@ -74,6 +74,44 @@ export default function PipelinePage() {
   useEffect(() => {
     if (preselectedJdId) setSelectedJdId(preselectedJdId)
   }, [preselectedJdId])
+
+  // Folder name search — debounced
+  const handleFolderSearch = (value: string) => {
+    setFolderName(value)
+    setDriveFolderId('')
+    setShowDropdown(true)
+    if (folderDebounceRef.current) clearTimeout(folderDebounceRef.current)
+    if (!value.trim()) {
+      setFolderResults([])
+      setShowDropdown(false)
+      return
+    }
+    folderDebounceRef.current = setTimeout(async () => {
+      setFolderSearching(true)
+      try {
+        const results = await searchDriveFolders(value.trim())
+        setFolderResults(results)
+      } catch {
+        setFolderResults([])
+      } finally {
+        setFolderSearching(false)
+      }
+    }, 400)
+  }
+
+  const selectFolder = (folder: { id: string; name: string }) => {
+    setDriveFolderId(folder.id)
+    setFolderName(folder.name)
+    setFolderResults([])
+    setShowDropdown(false)
+  }
+
+  const clearFolder = () => {
+    setDriveFolderId('')
+    setFolderName('')
+    setFolderResults([])
+    setShowDropdown(false)
+  }
 
   // Simulate step progress while the pipeline is running
   useEffect(() => {
@@ -306,7 +344,7 @@ export default function PipelinePage() {
                     Top {result.top_candidates.length} Candidate{result.top_candidates.length !== 1 ? 's' : ''}
                   </h3>
                   {result.top_candidates.map((c, i) => (
-                    <CandidateResultCard key={c.drive_file_id} result={c} rank={i + 1} />
+                    <CandidateResultCard key={c.drive_file_id} result={c} rank={i + 1} jdTitle={result.jd.title} />
                   ))}
                 </div>
               )}

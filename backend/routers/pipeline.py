@@ -256,21 +256,30 @@ def run_pipeline(
             detail += " Errors: " + "; ".join(fetch_errors)
         raise HTTPException(status_code=404, detail=detail)
 
-    # ── Steps 3+4: Parse + match all resumes (parallel) ──────
+    # ── Steps 3+4: Parse + match all resumes ─────────────────
     all_results: List[CandidateMatchResult] = []
 
-    # Use ThreadPoolExecutor for I/O-bound AI calls
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-        future_map = {
-            executor.submit(_process_one_resume, file_meta, jd_data, jd_obj, jd_raw_text): file_meta
-            for file_meta in resumes
-        }
-        for future in concurrent.futures.as_completed(future_map):
-            result, err = future.result()
+    # Ollama processes one request at a time — run sequentially to avoid timeouts.
+    # Gemini can handle parallel requests — use ThreadPoolExecutor.
+    if _os.getenv("AI_PROVIDER", "gemini").lower() == "ollama":
+        for file_meta in resumes:
+            result, err = _process_one_resume(file_meta, jd_data, jd_obj, jd_raw_text)
             if err:
                 errors.append(err)
             elif result:
                 all_results.append(result)
+    else:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            future_map = {
+                executor.submit(_process_one_resume, file_meta, jd_data, jd_obj, jd_raw_text): file_meta
+                for file_meta in resumes
+            }
+            for future in concurrent.futures.as_completed(future_map):
+                result, err = future.result()
+                if err:
+                    errors.append(err)
+                elif result:
+                    all_results.append(result)
 
     # ── Step 5: Filter by min_score ───────────────────────────
     above_threshold = [r for r in all_results if r.match_score >= payload.min_score]
