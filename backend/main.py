@@ -7,9 +7,11 @@ Run with:
   uvicorn main:app --reload --port 8000
 """
 
+from dotenv import load_dotenv
+load_dotenv()  # must run before any module that reads os.getenv() at import time
+
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from dotenv import load_dotenv
 from sqlalchemy import text, inspect
 from sqlalchemy.orm import Session
 import os
@@ -18,10 +20,8 @@ from database import engine, Base, get_db
 from routers import auth
 from routers import jobs
 from routers import pipeline
-from routers import interviews
+from routers import email
 from routers.auth import get_current_user
-
-load_dotenv()
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
@@ -44,10 +44,10 @@ app.add_middleware(
 )
 
 # ── Routers ───────────────────────────────────────────────────
-app.include_router(auth.router)        # /auth/*
-app.include_router(jobs.router)        # /jobs/*
-app.include_router(pipeline.router)    # /pipeline/*
-app.include_router(interviews.router)  # /interviews/*
+app.include_router(auth.router)       # /auth/*
+app.include_router(jobs.router)       # /jobs/*
+app.include_router(pipeline.router)   # /pipeline/*
+app.include_router(email.router)       # /email/*
 
 
 # ─────────────────────────────────────────────────────────────

@@ -126,30 +126,35 @@ def download_and_parse_resume(
 
 
 # ─────────────────────────────────────────────────────────────
-# SEARCH folders by name
+# SEARCH Drive folders by name (for the folder picker UI)
 # ─────────────────────────────────────────────────────────────
 def search_folders(
     access_token: str,
-    name_query: str,
+    query: str,
     page_size: int = 20,
 ) -> List[Dict]:
     """
-    Search Google Drive for folders whose name contains name_query.
-    Returns list of {id, name} dicts.
+    Search for Drive folders whose name contains `query`.
+
+    Returns a list of {id, name} dicts.
     """
-    service = _get_drive_service(access_token)
-    query = (
-        f"mimeType='application/vnd.google-apps.folder' "
-        f"and name contains '{name_query.replace(chr(39), '')}' "
-        f"and trashed=false"
-    )
-    result = service.files().list(
-        q=query,
-        fields="files(id, name)",
-        pageSize=page_size,
-        orderBy="name",
-    ).execute()
-    return result.get("files", [])
+    try:
+        service = _get_drive_service(access_token)
+        q = (
+            f"mimeType='application/vnd.google-apps.folder' "
+            f"and name contains '{query.replace(chr(39), '')}' "
+            f"and trashed=false"
+        )
+        result = service.files().list(
+            q=q,
+            fields="files(id, name)",
+            pageSize=page_size,
+            orderBy="name",
+        ).execute()
+        return result.get("files", [])
+    except Exception as e:
+        print(f"[Drive] search_folders error: {e}")
+        return []
 
 
 # ─────────────────────────────────────────────────────────────

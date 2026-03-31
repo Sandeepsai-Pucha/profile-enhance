@@ -1,39 +1,33 @@
 """
-services/ai_service.py
-──────────────────────
-All Google Gemini API calls for the 9-step pipeline:
+services/claude_service.py
+──────────────────────────
+AI service using Anthropic Claude API.
 
-  1. parse_jd()                         – extract rich structure from JD text
-  2. parse_resume()                     – extract rich structure from resume text
-  3. match_resume_to_jd()               – semantic score + skill gap analysis
-  4. generate_improvement_suggestions() – resume improvement advice
-  5. generate_interview_questions()     – tailored questions per candidate
-  6. generate_executive_summary()       – final ranked summary
+Switch via AI_PROVIDER env var in backend/.env:
+    AI_PROVIDER=claude   # use this file (default)
 
-AI Provider : Google Gemini (gemini-1.5-flash)
-Free tier   : 1,500 requests/day · 15 requests/minute · no credit card needed
-Get API key : https://aistudio.google.com/ → "Get API key"
+Config env vars:
+    ANTHROPIC_API_KEY=sk-ant-...
+    CLAUDE_MODEL=claude-opus-4-6   (default)
 """
 
-import os
 import json
 import re
-from typing import List, Dict, Any, Optional
+import os
+from typing import List, Dict, Any
 
-import google.generativeai as genai
-from dotenv import load_dotenv
+import anthropic
 
-load_dotenv()
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+CLAUDE_MODEL      = os.getenv("CLAUDE_MODEL", "claude-haiku-4-5")
 
-# ── Gemini setup ─────────────────────────────────────────────
-genai.configure(api_key=os.getenv("API_KEY"))
-_model = genai.GenerativeModel("gemini-2.5-flash")
+_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
-MAX_RESUME_CHARS = 6000   # truncate very long resumes before sending to Gemini
+MAX_RESUME_CHARS = 6000
 
 
 # ─────────────────────────────────────────────────────────────
-# HELPER: strip markdown fences + parse JSON safely
+# HELPERS
 # ─────────────────────────────────────────────────────────────
 def _clean_json(text: str) -> str:
     text = text.strip()
@@ -43,11 +37,9 @@ def _clean_json(text: str) -> str:
 
 
 def _parse_json(raw: str, fallback: Any) -> Any:
-    """Parse Gemini's response as JSON; return fallback on failure."""
     try:
         return json.loads(_clean_json(raw))
     except (json.JSONDecodeError, ValueError):
-        # Try to extract the first JSON object/array from the response
         match = re.search(r"(\{.*\}|\[.*\])", raw, re.DOTALL)
         if match:
             try:
@@ -57,22 +49,20 @@ def _parse_json(raw: str, fallback: Any) -> Any:
         return fallback
 
 
-def _call_gemini(prompt: str) -> str:
-    """Single Gemini call with basic error handling."""
-    if _model is None:
-        raise RuntimeError("Gemini model is not initialized. Set AI_PROVIDER=gemini in .env")
-    response = _model.generate_content(prompt)
-    return response.text
+def _call_claude(prompt: str) -> str:
+    """Send a prompt to Claude and return the text response."""
+    response = _client.messages.create(
+        model=CLAUDE_MODEL,
+        max_tokens=2048,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return response.content[0].text
 
 
 # ═══════════════════════════════════════════════════════════════
-# 1. PARSE JOB DESCRIPTION  →  rich structured data
+# 1. PARSE JOB DESCRIPTION
 # ═══════════════════════════════════════════════════════════════
 def parse_jd(jd_text: str) -> Dict[str, Any]:
-    """
-    Extract comprehensive structured data from raw JD text.
-    Returns a dict with all fields; missing fields default to empty/null.
-    """
     prompt = f"""You are a senior HR analyst. Analyse this Job Description and return ONLY a
 valid JSON object with EXACTLY this structure (no extra keys, no markdown):
 
@@ -104,9 +94,8 @@ Job Description:
 {jd_text}
 """
     try:
-        raw  = _call_gemini(prompt)
+        raw  = _call_claude(prompt)
         data = _parse_json(raw, {})
-        # Ensure list fields are always lists
         for key in ("required_skills", "nice_to_have_skills", "responsibilities", "benefits"):
             if not isinstance(data.get(key), list):
                 data[key] = []
@@ -114,7 +103,7 @@ Job Description:
         data.setdefault("experience_max", 99)
         return data
     except Exception as e:
-        print(f"[AI] parse_jd failed: {e}")
+        print(f"[Claude] parse_jd failed: {e}")
         return {
             "required_skills": [], "nice_to_have_skills": [],
             "experience_min": 0, "experience_max": 99,
@@ -125,13 +114,9 @@ Job Description:
 
 
 # ═══════════════════════════════════════════════════════════════
-# 2. PARSE RESUME  →  structured candidate profile
+# 2. PARSE RESUME
 # ═══════════════════════════════════════════════════════════════
 def parse_resume(resume_text: str) -> Dict[str, Any]:
-    """
-    Extract structured data from raw resume/CV text.
-    Returns a dict with candidate profile data.
-    """
     truncated = resume_text[:MAX_RESUME_CHARS]
 
     prompt = f"""You are an expert resume parser. Extract structured information from this resume
@@ -160,14 +145,14 @@ and return ONLY a valid JSON object with EXACTLY this structure (no markdown):
 Rules:
 - experience_years: total professional experience as a decimal number
 - skills: flat list of ALL technical and soft skills mentioned anywhere in the resume
-- If a field is not present in the resume, use null for strings, [] for arrays, 0 for numbers
+- If a field is not present, use null for strings, [] for arrays, 0 for numbers
 - Return ONLY the JSON — no explanation
 
 Resume:
 {truncated}
 """
     try:
-        raw  = _call_gemini(prompt)
+        raw  = _call_claude(prompt)
         data = _parse_json(raw, {})
         data.setdefault("name", "Unknown")
         data.setdefault("skills", [])
@@ -176,7 +161,7 @@ Resume:
         data.setdefault("experience_years", 0)
         return data
     except Exception as e:
-        print(f"[AI] parse_resume failed: {e}")
+        print(f"[Claude] parse_resume failed: {e}")
         return {
             "name": "Unknown", "email": None, "phone": None,
             "current_role": None, "experience_years": 0,
@@ -186,7 +171,7 @@ Resume:
 
 
 # ═══════════════════════════════════════════════════════════════
-# 3. MATCH RESUME TO JD  →  score + gap analysis
+# 3. MATCH RESUME TO JD
 # ═══════════════════════════════════════════════════════════════
 def match_resume_to_jd(
     jd_data:     Dict[str, Any],
@@ -194,23 +179,12 @@ def match_resume_to_jd(
     resume_text: str,
     jd_raw_text: str = "",
 ) -> Dict[str, Any]:
-    """
-    Semantic match of one resume against the JD.
-    Returns match_score (0-100), skill analysis, experience match, AI summary.
-
-    Scoring weights:
-      40% – required skills coverage (semantic / fuzzy)
-      25% – responsibilities / domain alignment
-      20% – experience years fit
-      15% – education + overall profile fit
-    """
     required_skills  = jd_data.get("required_skills", [])
     candidate_skills = resume_data.get("skills", [])
     exp_min          = jd_data.get("experience_min", 0)
     exp_max          = jd_data.get("experience_max", 99)
     candidate_exp    = resume_data.get("experience_years", 0)
 
-    # If structured skills list is thin, include the raw JD text as extra context
     jd_context = ""
     if len(required_skills) < 3 and jd_raw_text:
         jd_context = f"\nFull JD Text (use this to infer required skills):\n{jd_raw_text[:2000]}"
@@ -244,31 +218,26 @@ Evaluate the candidate and return ONLY this JSON (no markdown, no explanation):
   "ai_summary":       "3-sentence assessment of overall fit, strengths, and gaps"
 }}
 
-=== SCORING GUIDE (calibrated — not overly strict) ===
-- 80-100: Excellent fit — meets 80%+ required skills, relevant domain experience
-- 60-79:  Good fit     — meets 60-79% required skills, minor gaps easily bridged
-- 40-59:  Partial fit  — meets ~half the required skills, trainable on gaps
-- 20-39:  Weak fit     — meets some skills but has significant gaps
+=== SCORING GUIDE ===
+- 80-100: Excellent fit — meets 80%+ required skills
+- 60-79:  Good fit     — meets 60-79% required skills
+- 40-59:  Partial fit  — meets ~half the required skills
+- 20-39:  Weak fit     — significant gaps
 -  0-19:  Poor fit     — few or no matching skills
 
-=== MANDATORY MATCHING RULES ===
-1. SEMANTIC matching: "React" = "React.js" = "ReactJS" = "React Native web";
-   "Node" = "Node.js"; "JS" = "JavaScript"; "TS" = "TypeScript";
-   "Postgres" = "PostgreSQL"; "Mongo" = "MongoDB"; "K8s" = "Kubernetes".
-2. If a candidate lists a skill OR demonstrates it through project/work experience,
-   count it as matched — even if not in their skills list explicitly.
-3. A candidate with 3 out of 5 required skills earns at least a 40 score.
-4. A candidate with 4 out of 5 required skills earns at least a 55 score.
-5. Do NOT penalise for missing "nice-to-have" skills in the score.
-6. Give benefit of the doubt for adjacent/related technologies.
-7. experience_match: "Under-qualified" if exp < exp_min-1,
-                     "Over-qualified" if exp > exp_max+3,
-                     "Good fit" otherwise.
+=== MATCHING RULES ===
+1. Semantic matching: "React" = "React.js" = "ReactJS"; "Node" = "Node.js";
+   "JS" = "JavaScript"; "TS" = "TypeScript"; "Postgres" = "PostgreSQL";
+   "Mongo" = "MongoDB"; "K8s" = "Kubernetes".
+2. Count a skill as matched if demonstrated in projects/work experience too.
+3. 3 of 5 required skills → at least 40 score; 4 of 5 → at least 55 score.
+4. Do NOT penalise for missing nice-to-have skills.
+5. experience_match: "Under-qualified" | "Good fit" | "Over-qualified"
 
 Return ONLY valid JSON — no markdown fences, no extra text.
 """
     try:
-        raw  = _call_gemini(prompt)
+        raw  = _call_claude(prompt)
         data = _parse_json(raw, {})
         data.setdefault("match_score", 0)
         data.setdefault("matched_skills", [])
@@ -276,12 +245,11 @@ Return ONLY valid JSON — no markdown fences, no extra text.
         data.setdefault("extra_skills", [])
         data.setdefault("experience_match", "Good fit")
         data.setdefault("ai_summary", "Analysis unavailable.")
-        # Clamp score to 0-100
         data["match_score"] = max(0, min(100, float(data["match_score"])))
-        print(f"[AI] Match score for {resume_data.get('name', 'Unknown')}: {data['match_score']}")
+        print(f"[Claude] Match score for {resume_data.get('name', 'Unknown')}: {data['match_score']}")
         return data
     except Exception as e:
-        print(f"[AI] match_resume_to_jd failed: {e}")
+        print(f"[Claude] match_resume_to_jd failed: {e}")
         return {
             "match_score": 0, "matched_skills": [], "missing_skills": [],
             "extra_skills": [], "experience_match": "Unknown",
@@ -290,7 +258,7 @@ Return ONLY valid JSON — no markdown fences, no extra text.
 
 
 # ═══════════════════════════════════════════════════════════════
-# 4. IMPROVEMENT SUGGESTIONS  →  actionable resume advice
+# 4. IMPROVEMENT SUGGESTIONS
 # ═══════════════════════════════════════════════════════════════
 def generate_improvement_suggestions(
     jd_data:        Dict[str, Any],
@@ -298,10 +266,6 @@ def generate_improvement_suggestions(
     missing_skills: List[str],
     match_score:    float,
 ) -> List[str]:
-    """
-    Generate specific, actionable suggestions to improve the candidate's
-    resume for this particular JD.  Returns 4-6 bullet-point suggestions.
-    """
     prompt = f"""You are a professional resume coach helping a candidate improve their resume
 to better match this specific job description.
 
@@ -312,29 +276,27 @@ Candidate's Current Role: {resume_data.get('current_role', 'Unknown')}
 Candidate's Skills: {', '.join(resume_data.get('skills', [])[:15])}
 
 Return ONLY a JSON array of 4-6 specific, actionable improvement suggestions (strings).
-Each suggestion should be concrete and tailored to the gap — not generic advice.
+Each suggestion must be concrete and tailored — not generic advice.
 
-Example format:
+Example:
 ["Add a dedicated Skills section listing AWS services you've used (S3, EC2, RDS)",
- "Quantify your API performance improvements with metrics (e.g., 'reduced latency by 40%')",
- "Obtain the AWS Solutions Architect Associate certification to address the cloud gap",
- "Rewrite your work history bullets to emphasise microservices architecture experience"]
+ "Quantify your API performance improvements with metrics (e.g., 'reduced latency by 40%')"]
 
 Return ONLY the JSON array — no explanation, no markdown.
 """
     try:
-        raw  = _call_gemini(prompt)
+        raw  = _call_claude(prompt)
         data = _parse_json(raw, [])
         if isinstance(data, list):
             return [str(s) for s in data[:6]]
         return []
     except Exception as e:
-        print(f"[AI] generate_improvement_suggestions failed: {e}")
+        print(f"[Claude] generate_improvement_suggestions failed: {e}")
         return ["Unable to generate suggestions at this time."]
 
 
 # ═══════════════════════════════════════════════════════════════
-# 5. INTERVIEW QUESTIONS  →  tailored per candidate
+# 5. INTERVIEW QUESTIONS
 # ═══════════════════════════════════════════════════════════════
 def generate_interview_questions(
     job_title:       str,
@@ -345,10 +307,6 @@ def generate_interview_questions(
     candidate_name:  str,
     candidate_role:  str,
 ) -> List[Dict[str, str]]:
-    """
-    Generate 8 targeted interview questions tailored to both the JD
-    and the specific candidate's profile.
-    """
     prompt = f"""You are a senior technical interviewer preparing for an interview.
 
 Role: {job_title}
@@ -373,32 +331,28 @@ Return ONLY a JSON array (no markdown):
   }}
 ]
 
-difficulty must be one of: Easy | Medium | Hard
-category must be one of:   Technical | Gap | Behavioural | Situational
+difficulty: Easy | Medium | Hard
+category:   Technical | Gap | Behavioural | Situational
 """
     try:
-        raw  = _call_gemini(prompt)
+        raw  = _call_claude(prompt)
         data = _parse_json(raw, [])
         if isinstance(data, list):
             return data[:8]
         return []
     except Exception as e:
-        print(f"[AI] generate_interview_questions failed: {e}")
+        print(f"[Claude] generate_interview_questions failed: {e}")
         return []
 
 
 # ═══════════════════════════════════════════════════════════════
-# 6. EXECUTIVE SUMMARY  →  final ranked narrative
+# 6. EXECUTIVE SUMMARY
 # ═══════════════════════════════════════════════════════════════
 def generate_executive_summary(
     job_title:      str,
     jd_summary:     str,
     top_candidates: List[Dict[str, Any]],
 ) -> str:
-    """
-    Write a concise executive summary recommending who to interview,
-    given the ranked list of top candidates.
-    """
     if not top_candidates:
         return "No candidates met the minimum match threshold for this role."
 
@@ -419,10 +373,10 @@ Top Candidates (ranked by match score):
 {candidate_lines}
 
 Be specific: mention names, key strengths, and primary concerns.
-Recommend who to interview first and why.  Plain text only — no bullet points, no markdown.
+Recommend who to interview first and why. Plain text only — no bullet points, no markdown.
 """
     try:
-        return _call_gemini(prompt).strip()
+        return _call_claude(prompt).strip()
     except Exception as e:
-        print(f"[AI] generate_executive_summary failed: {e}")
+        print(f"[Claude] generate_executive_summary failed: {e}")
         return "Executive summary could not be generated."

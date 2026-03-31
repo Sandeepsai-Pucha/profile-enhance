@@ -11,6 +11,7 @@ import HomePage from './pages/HomePage'
 import DashboardPage from './pages/DashboardPage'
 import JobsPage from './pages/JobsPage'
 import PipelinePage from './pages/PipelinePage'
+import ResultsPage from './pages/ResultsPage'
 import InterviewersPage from './pages/InterviewersPage'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -31,8 +32,8 @@ export default function App() {
   return (
     <Routes>
       {/* ── Public ───────────────────────────────── */}
-      <Route path="/"               element={<LoginPage />} />
-      <Route path="/auth/callback"  element={<AuthCallbackPage />} />
+      <Route path="/" element={<LoginPage />} />
+      <Route path="/auth/callback" element={<AuthCallbackPage />} />
 
       {/* ── Protected ────────────────────────────── */}
       <Route
@@ -43,12 +44,12 @@ export default function App() {
           </ProtectedRoute>
         }
       >
-        <Route index            element={<Navigate to="home" replace />} />
-        <Route path="home"      element={<HomePage />} />
+        <Route index element={<Navigate to="home" replace />} />
+        <Route path="home" element={<HomePage />} />
         <Route path="dashboard" element={<DashboardPage />} />
-        <Route path="jobs"      element={<JobsPage />} />
-        <Route path="pipeline"     element={<PipelinePage />} />
-        <Route path="interviewers" element={<InterviewersPage />} />
+        <Route path="jobs" element={<JobsPage />} />
+        <Route path="pipeline" element={<PipelinePage />} />
+        <Route path="results" element={<ResultsPage />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

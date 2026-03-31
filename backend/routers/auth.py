@@ -97,6 +97,7 @@ def google_login():
             detail="GOOGLE_CLIENT_ID is not configured. Check backend/.env"
         )
 
+    scopes = "openid email profile https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/gmail.send"
     scopes = "openid email profile https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/calendar.events"
     url = (
         "https://accounts.google.com/o/oauth2/v2/auth"

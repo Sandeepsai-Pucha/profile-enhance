@@ -1,0 +1,106 @@
+===RESUME 1===
+Name: Sandeep Pucha
+Email: sandeep.pucha@absyz.com
+Phone: +91-98765-43210
+
+Current Role: Backend Node.js Developer at TechNova Solutions, Hyderabad
+
+Experience: 4.5 years
+
+Summary:
+Backend developer with 4.5 years of experience building scalable REST APIs and microservices using Node.js and Express.js. Proficient in PostgreSQL, MongoDB, Docker, and AWS. Passionate about clean code, performance optimisation, and security best practices.
+
+Skills:
+Node.js, Express.js, JavaScript (ES6+), TypeScript, PostgreSQL, MongoDB, Redis, Docker, AWS (EC2, S3, RDS), JWT Authentication, OAuth 2.0, REST API Design, Jest, Git, GitHub Actions, Nginx, Linux
+
+Work History:
+
+Senior Backend Developer — TechNova Solutions (Jan 2022 – Present)
+- Designed and built 30+ RESTful APIs for a B2B SaaS platform serving 50k users
+- Migrated monolith to microservices, reducing deployment time by 60%
+- Implemented JWT + OAuth 2.0 authentication for multi-tenant access control
+- Optimised PostgreSQL queries, cutting average response time from 800ms to 120ms
+- Set up CI/CD pipelines using GitHub Actions and Docker for zero-downtime deploys
+
+Backend Developer — InnoSoft Labs (Jul 2019 – Dec 2021)
+- Built REST APIs using Node.js and Express.js for an e-commerce platform
+- Integrated third-party payment gateways (Razorpay, PayPal)
+- Managed MongoDB collections for product catalogues and order tracking
+- Wrote unit and integration tests with Jest achieving 80%+ coverage
+
+Education:
+B.Tech in Computer Science — JNTU Hyderabad (2019)
+
+Certifications:
+- AWS Certified Developer – Associate (2023)
+- MongoDB Certified Developer (2022)
+
+===RESUME 2===
+Name: Manish Reddy
+Email: manish.naini@absyz.com
+Phone: +91-91234-56789
+
+Current Role: Full Stack Developer at Infosys, Bengaluru
+
+Experience: 3 years
+
+Summary:
+Full-stack developer with 3 years of experience primarily in React and Node.js. Comfortable with backend development but has spent more time on frontend work. Familiar with PostgreSQL and basic Docker usage. Looking to transition to a backend-focused role.
+
+Skills:
+Node.js, Express.js, JavaScript, React, HTML, CSS, PostgreSQL, MySQL, Docker (basic), Git, REST APIs, Postman, Jest (basic)
+
+Work History:
+
+Full Stack Developer — Infosys (Mar 2021 – Present)
+- Developed frontend features using React for a financial dashboard product
+- Built several REST APIs in Node.js/Express to support frontend requirements
+- Managed PostgreSQL schemas and wrote optimised SQL queries
+- Integrated third-party APIs including SMS gateways and email services
+- Basic Docker experience — containerised two services for staging environments
+
+Junior Developer — StartupEdge (Jun 2020 – Feb 2021)
+- Built simple CRUD applications using Node.js and MySQL
+- Assisted in frontend development using vanilla JavaScript and HTML/CSS
+
+Education:
+B.E. in Information Technology — VTU Bengaluru (2020)
+
+Certifications:
+- None
+
+===RESUME 3===
+Name: Aravind Busarapu
+Email: aravind.busarapu@absyz.com
+Phone: +91-88001-23456
+
+Current Role: Java Backend Developer at Wipro, Chennai
+
+Experience: 5 years
+
+Summary:
+Experienced backend developer with 5 years in Java Spring Boot, building enterprise-grade REST APIs and microservices. Proficient with relational databases (MySQL, Oracle). Limited exposure to Node.js — completed one self-study project. Looking to pivot to Node.js ecosystem.
+
+Skills:
+Java, Spring Boot, Spring MVC, Hibernate, MySQL, Oracle DB, Maven, Jenkins, Docker, Kubernetes, REST APIs, Git, JUnit, Postman, Linux
+
+Work History:
+
+Senior Java Developer — Wipro (Jan 2021 – Present)
+- Built 20+ REST APIs using Spring Boot for a banking domain application
+- Designed relational database schemas in MySQL and Oracle
+- Deployed services using Docker and Kubernetes on AWS EKS
+- Wrote unit tests with JUnit achieving 85% code coverage
+- Participated in code reviews and technical design discussions
+
+Java Developer — HCL Technologies (Aug 2018 – Dec 2020)
+- Developed backend services using Java Spring MVC for an insurance portal
+- Maintained and optimised MySQL stored procedures and queries
+- Integrated SOAP and REST web services from third-party vendors
+
+Education:
+B.Tech in Electronics and Communication — Anna University Chennai (2018)
+
+Certifications:
+- Oracle Certified Professional Java SE 11 (2021)
+- AWS Solutions Architect Associate (2022)

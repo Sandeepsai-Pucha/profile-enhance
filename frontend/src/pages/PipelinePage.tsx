@@ -19,7 +19,7 @@ import BackButton from '../components/BackButton'
 // ── Pipeline step indicator ───────────────────────────────────
 const STEPS = [
   'Loading JD',
-  'Fetching resumes from Drive',
+  'Reading resumes from local file',
   'Parsing resumes with AI',
   'Matching against JD',
   'Filtering top candidates',
@@ -34,9 +34,9 @@ function StepList({ currentStep }: { currentStep: number }) {
       {STEPS.map((step, i) => (
         <div key={i} className="flex items-center gap-3">
           <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0
-            ${i < currentStep  ? 'bg-green-500'
-            : i === currentStep ? 'bg-cyan-400 animate-pulse'
-            : 'bg-slate-200'}`}>
+            ${i < currentStep ? 'bg-green-500'
+              : i === currentStep ? 'bg-cyan-400 animate-pulse'
+                : 'bg-slate-200'}`}>
             {i < currentStep ? (
               <CheckCircle2 size={12} className="text-white" />
             ) : (
@@ -56,26 +56,18 @@ function StepList({ currentStep }: { currentStep: number }) {
 
 export default function PipelinePage() {
   const [searchParams] = useSearchParams()
-  const preselectedJdId   = searchParams.get('jd') ? Number(searchParams.get('jd')) : null
-  const preselectedFolder = searchParams.get('folder') || import.meta.env.VITE_DEFAULT_DRIVE_FOLDER_ID || ''
-
+  const navigate = useNavigate()
+  const preselectedJdId = searchParams.get('jd') ? Number(searchParams.get('jd')) : null
   const [selectedJdId, setSelectedJdId] = useState<number | null>(preselectedJdId)
-  const [driveFolderId, setDriveFolderId] = useState(preselectedFolder)
-  // Folder name search state
-  const [folderResults, setFolderResults]   = useState<{ id: string; name: string }[]>([])
-  const [folderName, setFolderName]         = useState('')
-  const [folderSearching, setFolderSearching] = useState(false)
-  const [showDropdown, setShowDropdown]     = useState(false)
-  const folderDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const [topN,        setTopN]      = useState(5)
-  const [minScore,    setMinScore]  = useState(40)
+  const [topN, setTopN] = useState(5)
+  const [minScore, setMinScore] = useState(40)
   const [currentStep, setCurrentStep] = useState(-1)
-  const [result,      setResult]    = useState<PipelineResponse | null>(null)
+  const [result, setResult] = useState<PipelineResponse | null>(null)
 
   const { data: jds = [], isLoading: jdsLoading } = useQuery<JobDescription[]>({
     queryKey: ['jds'],
-    queryFn:  fetchJDs,
+    queryFn: fetchJDs,
   })
 
   // Auto-select preselected JD
@@ -131,10 +123,9 @@ export default function PipelinePage() {
 
   const mutation = useMutation({
     mutationFn: () => runPipeline({
-      jd_id:           selectedJdId!,
-      drive_folder_id: driveFolderId || undefined,
-      top_n:           topN,
-      min_score:       minScore,
+      jd_id: selectedJdId!,
+      top_n: topN,
+      min_score: minScore,
     }),
     onMutate: () => {
       setCurrentStep(0)
@@ -144,6 +135,7 @@ export default function PipelinePage() {
       setCurrentStep(STEPS.length)  // mark all done
       setResult(data)
       toast.success(`Pipeline complete — ${data.top_candidates.length} top candidate${data.top_candidates.length !== 1 ? 's' : ''} found!`)
+      navigate('/app/results', { state: { result: data } })
     },
     onError: (e: any) => {
       setCurrentStep(-1)
@@ -172,13 +164,13 @@ export default function PipelinePage() {
 
   return (
     <div className="space-y-6">
-      <BackButton to="/app/jobs" label="Back to Jobs" />
+      <BackButton to="/app/home" label="Back to Home" />
       <div>
         <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
           <Cpu size={24} /> Resume Matching Pipeline
         </h2>
         <p className="text-slate-500 text-sm mt-1">
-          Fetches resumes from your Google Drive, parses them with AI, matches against the JD, and ranks candidates.
+          Reads resumes from the local file, parses them with AI, matches against the JD, and ranks candidates.
         </p>
       </div>
 
@@ -210,57 +202,13 @@ export default function PipelinePage() {
               </div>
             </div>
 
-            {/* Drive folder name search */}
-            <div className="relative">
-              <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">
-                Drive Folder <span className="font-normal text-slate-400">(optional)</span>
-              </label>
-              <div className="relative">
-                <FolderOpen size={14} className="absolute left-3 top-3 text-slate-400" />
-                <input
-                  type="text"
-                  placeholder="Type folder name to search…"
-                  value={folderName}
-                  onChange={(e) => handleFolderSearch(e.target.value)}
-                  onFocus={() => folderResults.length > 0 && setShowDropdown(true)}
-                  className="w-full border border-slate-300 rounded-lg pl-8 pr-8 py-2.5 text-sm
-                             focus:outline-none focus:ring-2 focus:ring-sky-500"
-                />
-                {folderSearching && (
-                  <div className="absolute right-3 top-3 w-3.5 h-3.5 border-2 border-sky-400 border-t-transparent rounded-full animate-spin" />
-                )}
-                {folderName && !folderSearching && (
-                  <button onClick={clearFolder} className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600">
-                    <X size={14} />
-                  </button>
-                )}
+            {/* Local file indicator */}
+            <div className="flex items-center gap-2.5 bg-sky-50 border border-sky-200 rounded-lg px-3 py-2.5">
+              <FileSearch size={15} className="text-sky-500 shrink-0" />
+              <div>
+                <p className="text-xs font-semibold text-sky-700">Using local resume file</p>
+                <p className="text-[11px] text-sky-500 mt-0.5">sample-resumes.txt</p>
               </div>
-
-              {/* Dropdown results */}
-              {showDropdown && folderResults.length > 0 && (
-                <ul className="absolute z-10 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
-                  {folderResults.map((f) => (
-                    <li
-                      key={f.id}
-                      onClick={() => selectFolder(f)}
-                      className="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-sky-50 hover:text-blue-900"
-                    >
-                      <FolderOpen size={13} className="text-sky-400 shrink-0" />
-                      {f.name}
-                    </li>
-                  ))}
-                </ul>
-              )}
-
-              {/* Resolved folder ID badge */}
-              {driveFolderId && (
-                <p className="text-xs text-green-600 mt-1 font-medium">
-                  ✓ Folder selected — searching within "{folderName}"
-                </p>
-              )}
-              {!driveFolderId && !folderName && (
-                <p className="text-xs text-slate-400 mt-1">Leave blank to search your entire Drive</p>
-              )}
             </div>
 
             {/* Top N */}
@@ -360,10 +308,10 @@ export default function PipelinePage() {
               {/* Stats bar */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 {[
-                  { icon: FileText,    label: 'Files Found',  value: result.stats.total_files_found },
-                  { icon: Users,       label: 'Parsed',       value: result.stats.total_parsed },
-                  { icon: BarChart3,   label: 'Above Threshold', value: result.stats.total_above_threshold },
-                  { icon: Clock,       label: 'Time (secs)',  value: result.stats.processing_time_secs.toFixed(1) },
+                  { icon: FileText, label: 'Files Found', value: result.stats.total_files_found },
+                  { icon: Users, label: 'Parsed', value: result.stats.total_parsed },
+                  { icon: BarChart3, label: 'Above Threshold', value: result.stats.total_above_threshold },
+                  { icon: Clock, label: 'Time (secs)', value: result.stats.processing_time_secs.toFixed(1) },
                 ].map(({ icon: Icon, label, value }) => (
                   <div key={label} className="bg-white border border-slate-200 rounded-xl p-3 text-center">
                     <Icon size={18} className="mx-auto text-sky-500 mb-1" />
@@ -387,7 +335,7 @@ export default function PipelinePage() {
                   <Users size={36} className="mx-auto text-slate-300 mb-3" />
                   <p className="font-semibold text-slate-600">No candidates met the threshold</p>
                   <p className="text-sm text-slate-400 mt-1">
-                    Try lowering the minimum match score or upload more resumes to Drive.
+                    Try lowering the minimum match score or add more profiles to sample-resumes.txt.
                   </p>
                 </div>
               ) : (
