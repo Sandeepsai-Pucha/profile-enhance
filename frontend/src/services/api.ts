@@ -11,6 +11,9 @@ import type {
   ScheduleInterviewResponse,
   SendReportRequest,
   SendReportResponse,
+  IndexingResult,
+  IndexingStatusOut,
+  ResumesListOut,
 } from "../types";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
@@ -129,6 +132,66 @@ export const searchDriveFolders = (
   q: string,
 ): Promise<{ id: string; name: string }[]> =>
   api.get("/pipeline/folders", { params: { q } }).then((r) => r.data);
+
+// ══════════════════════════════════════════════════════════════
+//  INTERVIEW SCHEDULING
+// ══════════════════════════════════════════════════════════════
+
+// ══════════════════════════════════════════════════════════════
+//  INDEXING
+// ══════════════════════════════════════════════════════════════
+
+export const uploadResumes = (files: File[]): Promise<{ saved: string[]; errors: string[]; message: string }> => {
+  const form = new FormData();
+  files.forEach((f) => form.append("files", f));
+  return api
+    .post("/indexing/upload", form, { headers: { "Content-Type": "multipart/form-data" } })
+    .then((r) => r.data);
+};
+
+export const fetchResumeFiles = (): Promise<ResumesListOut> =>
+  api.get("/indexing/resumes").then((r) => r.data);
+
+export const deleteResumeFile = (filename: string): Promise<{ message: string }> =>
+  api.delete(`/indexing/resumes/${encodeURIComponent(filename)}`).then((r) => r.data);
+
+export const runIndexing = (): Promise<IndexingResult> =>
+  api.post("/indexing/run").then((r) => r.data);
+
+export const reindexAll = (): Promise<IndexingResult> =>
+  api.post("/indexing/reindex").then((r) => r.data);
+
+export const fetchIndexingStatus = (): Promise<IndexingStatusOut> =>
+  api.get("/indexing/status").then((r) => r.data);
+
+export const resetIndexing = (): Promise<{ deleted: number; message: string }> =>
+  api.delete("/indexing/reset").then((r) => r.data);
+
+export const generateUpdatedResume = (
+  source_file_id: string,
+  skills_to_add: string[],
+): Promise<Blob> =>
+  api
+    .post(
+      "/pipeline/generate-resume",
+      { source_file_id, skills_to_add },
+      { responseType: "blob" },
+    )
+    .then((r) => r.data)
+    .catch(async (err) => {
+      // When responseType is "blob", error responses come back as Blobs too.
+      // Parse them back to JSON so we can surface the real detail message.
+      if (err.response?.data instanceof Blob) {
+        const text = await err.response.data.text()
+        try {
+          const json = JSON.parse(text)
+          throw new Error(json.detail || text)
+        } catch {
+          throw new Error(text || `HTTP ${err.response.status}`)
+        }
+      }
+      throw err
+    });
 
 // ══════════════════════════════════════════════════════════════
 //  INTERVIEW SCHEDULING

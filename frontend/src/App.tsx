@@ -13,6 +13,7 @@ import JobsPage from './pages/JobsPage'
 import PipelinePage from './pages/PipelinePage'
 import ResultsPage from './pages/ResultsPage'
 import InterviewersPage from './pages/InterviewersPage'
+import IndexingPage from './pages/IndexingPage'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useAuth()
@@ -50,6 +51,7 @@ export default function App() {
         <Route path="jobs" element={<JobsPage />} />
         <Route path="pipeline" element={<PipelinePage />} />
         <Route path="results" element={<ResultsPage />} />
+        <Route path="indexing" element={<IndexingPage />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

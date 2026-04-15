@@ -1,29 +1,10 @@
 // src/components/ScheduleInterviewModal.tsx
-// ───────────────────────────────────────────
-// Modal to schedule an interview for a matched candidate.
-// Creates a Google Calendar event via the backend.
-
 import { useState } from 'react'
-import { useQuery, useMutation } from '@tanstack/react-query'
-import { X, Calendar, Clock, User, ExternalLink } from 'lucide-react'
-import { fetchInterviewers, scheduleInterview } from '../services/api'
-import type { CandidateMatchResult, Interviewer } from '../types'
+import { useMutation } from '@tanstack/react-query'
+import { X, Calendar, Clock, User, ExternalLink, Mail } from 'lucide-react'
+import { scheduleInterview } from '../services/api'
+import type { CandidateMatchResult } from '../types'
 
-// Generate 30-minute slots between available_from and available_to
-function generateSlots(from: string, to: string): string[] {
-  const slots: string[] = []
-  const [fh, fm] = from.split(':').map(Number)
-  const [th, tm] = to.split(':').map(Number)
-  let h = fh, m = fm
-  while (h < th || (h === th && m < tm)) {
-    slots.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`)
-    m += 30
-    if (m >= 60) { h += 1; m -= 60 }
-  }
-  return slots
-}
-
-// Add N minutes to a date+time, returns ISO datetime string (no trailing Z — keeps local time)
 function addMinutes(date: string, time: string, minutes: number): string {
   const [hour, minute] = time.split(':').map(Number)
   const total = hour * 60 + minute + minutes
@@ -31,6 +12,13 @@ function addMinutes(date: string, time: string, minutes: number): string {
   const endM  = total % 60
   return `${date}T${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}:00`
 }
+
+// 30-min slots from 09:00 to 18:00
+const TIME_SLOTS = Array.from({ length: 18 }, (_, i) => {
+  const h = Math.floor(i / 2) + 9
+  const m = i % 2 === 0 ? '00' : '30'
+  return `${String(h).padStart(2, '0')}:${m}`
+})
 
 interface Props {
   candidate: CandidateMatchResult
@@ -42,27 +30,24 @@ export default function ScheduleInterviewModal({ candidate, jdTitle, onClose }: 
   const resume = candidate.parsed_resume
   const today  = new Date().toISOString().slice(0, 10)
 
-  const [selectedEmail, setSelectedEmail] = useState('')
-  const [selectedDate,  setSelectedDate]  = useState(today)
-  const [selectedTime,  setSelectedTime]  = useState('')
-  const [eventLink,     setEventLink]     = useState<string | null>(null)
-  const [successMsg,    setSuccessMsg]    = useState('')
+  const [interviewerEmail, setInterviewerEmail] = useState('')
+  const [emailError,       setEmailError]       = useState('')
+  const [selectedDate,     setSelectedDate]     = useState(today)
+  const [selectedTime,     setSelectedTime]     = useState('')
+  const [eventLink,        setEventLink]        = useState<string | null>(null)
+  const [successMsg,       setSuccessMsg]       = useState('')
 
-  const { data: interviewers = [], isLoading } = useQuery<Interviewer[]>({
-    queryKey: ['interviewers'],
-    queryFn:  fetchInterviewers,
-  })
-
-  const selectedInterviewer = interviewers.find(i => i.email === selectedEmail)
-  const timeSlots = selectedInterviewer
-    ? generateSlots(selectedInterviewer.available_from, selectedInterviewer.available_to)
-    : []
+  const validateEmail = (val: string) => {
+    if (!val) return 'Interviewer email is required'
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val)) return 'Enter a valid email address'
+    return ''
+  }
 
   const mutation = useMutation({
     mutationFn: () => scheduleInterview({
       candidate_name:    resume.name,
       candidate_email:   resume.email ?? null,
-      interviewer_email: selectedEmail,
+      interviewer_email: interviewerEmail.trim(),
       jd_title:          jdTitle,
       resume_url:        candidate.drive_file_url,
       ai_summary:        candidate.ai_summary,
@@ -76,7 +61,14 @@ export default function ScheduleInterviewModal({ candidate, jdTitle, onClose }: 
     },
   })
 
-  const canSubmit = selectedEmail && selectedDate && selectedTime && !mutation.isPending && !eventLink
+  const handleSubmit = () => {
+    const err = validateEmail(interviewerEmail)
+    setEmailError(err)
+    if (err) return
+    mutation.mutate()
+  }
+
+  const canSubmit = interviewerEmail && selectedDate && selectedTime && !mutation.isPending && !eventLink
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
@@ -117,33 +109,28 @@ export default function ScheduleInterviewModal({ candidate, jdTitle, onClose }: 
             <p className="text-xs text-slate-400 italic leading-relaxed">{candidate.ai_summary}</p>
           </div>
 
-          {/* Interviewer selector */}
+          {/* Interviewer email input */}
           <div>
             <label className="block text-xs font-semibold text-slate-500 mb-2 uppercase tracking-wide">
-              Interviewer
+              Interviewer Email
             </label>
-            {isLoading ? (
-              <p className="text-sm text-slate-400">Loading interviewers…</p>
-            ) : (
-              <div className="space-y-2">
-                {interviewers.map((iv) => (
-                  <button
-                    key={iv.email}
-                    onClick={() => { setSelectedEmail(iv.email); setSelectedTime('') }}
-                    className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border text-sm
-                      transition-colors text-left
-                      ${selectedEmail === iv.email
-                        ? 'border-blue-900 bg-blue-50 text-blue-900'
-                        : 'border-slate-200 hover:border-sky-400 text-slate-700'}`}
-                  >
-                    <span className="font-medium">{iv.name}</span>
-                    <span className="text-xs text-slate-400 flex items-center gap-1">
-                      <Clock size={11} />
-                      {iv.available_from} – {iv.available_to} IST
-                    </span>
-                  </button>
-                ))}
-              </div>
+            <div className="relative">
+              <Mail size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="email"
+                placeholder="interviewer@company.com"
+                value={interviewerEmail}
+                onChange={(e) => {
+                  setInterviewerEmail(e.target.value)
+                  if (emailError) setEmailError(validateEmail(e.target.value))
+                }}
+                className={`w-full pl-9 pr-3 py-2.5 border rounded-lg text-sm
+                  focus:outline-none focus:ring-2 focus:ring-sky-500
+                  ${emailError ? 'border-red-400 bg-red-50' : 'border-slate-300'}`}
+              />
+            </div>
+            {emailError && (
+              <p className="text-xs text-red-500 mt-1">{emailError}</p>
             )}
           </div>
 
@@ -163,27 +150,25 @@ export default function ScheduleInterviewModal({ candidate, jdTitle, onClose }: 
           </div>
 
           {/* Time slot picker */}
-          {selectedInterviewer && (
-            <div>
-              <label className="block text-xs font-semibold text-slate-500 mb-2 uppercase tracking-wide">
-                Time Slot (45 min · IST) — {selectedInterviewer.available_from}–{selectedInterviewer.available_to}
-              </label>
-              <div className="flex flex-wrap gap-2">
-                {timeSlots.map((slot) => (
-                  <button
-                    key={slot}
-                    onClick={() => setSelectedTime(slot)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors
-                      ${selectedTime === slot
-                        ? 'bg-blue-900 text-white border-blue-900'
-                        : 'border-slate-200 text-slate-600 hover:border-sky-400'}`}
-                  >
-                    {slot}
-                  </button>
-                ))}
-              </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 mb-2 uppercase tracking-wide">
+              Time Slot (45 min · IST)
+            </label>
+            <div className="flex flex-wrap gap-2">
+              {TIME_SLOTS.map((slot) => (
+                <button
+                  key={slot}
+                  onClick={() => setSelectedTime(slot)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors
+                    ${selectedTime === slot
+                      ? 'bg-blue-900 text-white border-blue-900'
+                      : 'border-slate-200 text-slate-600 hover:border-sky-400'}`}
+                >
+                  {slot}
+                </button>
+              ))}
             </div>
-          )}
+          </div>
 
           {/* Error */}
           {mutation.isError && (
@@ -218,7 +203,7 @@ export default function ScheduleInterviewModal({ candidate, jdTitle, onClose }: 
             </button>
             {!eventLink && (
               <button
-                onClick={() => mutation.mutate()}
+                onClick={handleSubmit}
                 disabled={!canSubmit}
                 className="px-5 py-2 text-sm font-semibold bg-blue-900 text-white
                            rounded-lg hover:bg-blue-950 disabled:opacity-50

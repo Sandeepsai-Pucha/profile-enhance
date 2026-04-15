@@ -21,6 +21,8 @@ from routers import auth
 from routers import jobs
 from routers import pipeline
 from routers import email
+from routers import indexing
+from routers import interviews
 from routers.auth import get_current_user
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
@@ -44,10 +46,12 @@ app.add_middleware(
 )
 
 # ── Routers ───────────────────────────────────────────────────
-app.include_router(auth.router)       # /auth/*
-app.include_router(jobs.router)       # /jobs/*
-app.include_router(pipeline.router)   # /pipeline/*
+app.include_router(auth.router)        # /auth/*
+app.include_router(jobs.router)        # /jobs/*
+app.include_router(pipeline.router)    # /pipeline/*
 app.include_router(email.router)       # /email/*
+app.include_router(indexing.router)    # /indexing/*
+app.include_router(interviews.router)  # /interviews/*
 
 
 # ─────────────────────────────────────────────────────────────
@@ -79,17 +83,55 @@ def _migrate_jd_columns():
                     f"ALTER TABLE job_descriptions ADD COLUMN {col_name} {col_type}"
                 ))
                 conn.commit()
-                print(f"  ✅ Added column: job_descriptions.{col_name}")
+                print(f"  [Migrate] Added column: job_descriptions.{col_name}")
+
+
+def _migrate_candidate_profiles():
+    """
+    Add candidate_profiles table columns if they don't exist.
+    Safe to run on every startup (idempotent).
+    """
+    inspector = inspect(engine)
+    tables = inspector.get_table_names()
+
+    if "candidate_profiles" not in tables:
+        # Table will be created by create_all — nothing to migrate
+        return
+
+    existing_cols = {c["name"] for c in inspector.get_columns("candidate_profiles")}
+    new_columns = [
+        ("source_file_id",   "VARCHAR(256)"),
+        ("file_name",        "VARCHAR(512)"),
+        ("user_id",          "INTEGER"),
+        ("page_index",       "TEXT"),
+        ("bm25_corpus",      "TEXT"),
+        ("candidate_name",   "VARCHAR(256)"),
+        ("current_role",     "VARCHAR(256)"),
+        ("experience_years", "FLOAT"),
+        ("skills",           "TEXT"),
+        ("indexed_at",       "TIMESTAMP"),
+    ]
+    with engine.connect() as conn:
+        for col_name, col_type in new_columns:
+            if col_name not in existing_cols:
+                conn.execute(text(
+                    f"ALTER TABLE candidate_profiles ADD COLUMN {col_name} {col_type}"
+                ))
+                conn.commit()
+                print(f"  [Migrate] Added column: candidate_profiles.{col_name}")
 
 
 @app.on_event("startup")
 def on_startup():
     Base.metadata.create_all(bind=engine)
-    print("✅ Database tables ready")
     try:
         _migrate_jd_columns()
     except Exception as e:
-        print(f"⚠️  Column migration warning (safe to ignore if tables are fresh): {e}")
+        print(f"[Migrate] Column migration warning (safe to ignore if tables are fresh): {e}")
+    try:
+        _migrate_candidate_profiles()
+    except Exception as e:
+        print(f"[Migrate] CandidateProfile migration warning: {e}")
 
 
 # ── Health check ──────────────────────────────────────────────

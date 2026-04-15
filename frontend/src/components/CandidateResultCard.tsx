@@ -5,12 +5,13 @@
 
 import { useState } from 'react'
 import {
-  ChevronDown, ChevronUp, ExternalLink, User,
+  ChevronDown, ChevronUp, ExternalLink,
   CheckCircle, XCircle, Sparkles, MessageSquare, Lightbulb,
-  Briefcase, GraduationCap, Clock, CalendarPlus,
+  Briefcase, GraduationCap, Clock, CalendarPlus, Download,
 } from 'lucide-react'
 import type { CandidateMatchResult, InterviewQuestion } from '../types'
 import ScheduleInterviewModal from './ScheduleInterviewModal'
+import { generateUpdatedResume } from '../services/api'
 
 // ── Score ring ────────────────────────────────────────────────
 function ScoreRing({ score }: { score: number }) {
@@ -73,7 +74,40 @@ export default function CandidateResultCard({
 }) {
   const [open, setOpen] = useState(rank === 1) // auto-open top candidate
   const [scheduleOpen, setScheduleOpen] = useState(false)
+  const [selectedSkills, setSelectedSkills] = useState<Set<string>>(new Set())
+  const [isDownloading, setIsDownloading] = useState(false)
   const resume = result.parsed_resume
+
+  const toggleSkill = (skill: string) => {
+    setSelectedSkills((prev) => {
+      const next = new Set(prev)
+      next.has(skill) ? next.delete(skill) : next.add(skill)
+      return next
+    })
+  }
+
+  const handleDownload = async () => {
+    setIsDownloading(true)
+    try {
+      const blob = await generateUpdatedResume(
+        result.drive_file_id,
+        Array.from(selectedSkills),
+      )
+      const url  = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href     = url
+      link.download = `${resume.name.replace(/\s+/g, '_')}_updated.pdf`
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      console.error('Resume download failed:', err)
+      alert(`Failed to generate resume: ${err instanceof Error ? err.message : 'Unknown error'}`)
+    } finally {
+      setIsDownloading(false)
+    }
+  }
 
   const expColor =
     result.experience_match === 'Good fit'       ? 'text-green-600 bg-green-50'  :
@@ -157,6 +191,52 @@ export default function CandidateResultCard({
         <p className="mt-3 text-sm text-slate-600 bg-slate-50 rounded-xl px-4 py-2.5 italic leading-relaxed">
           {result.ai_summary}
         </p>
+
+        {/* Missing skills + resume download — always visible */}
+        {result.missing_skills.length > 0 && (
+          <div className="mt-3 border border-red-100 bg-red-50 rounded-xl px-4 py-3">
+            <p className="text-xs font-semibold text-red-500 mb-2 flex items-center gap-1">
+              <XCircle size={12} />
+              Missing Skills — click to select, then download an updated resume
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {result.missing_skills.map((s) => {
+                const checked = selectedSkills.has(s)
+                return (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); toggleSkill(s) }}
+                    className={`text-xs px-2.5 py-1 rounded-full border flex items-center gap-1.5 transition-colors cursor-pointer
+                      ${checked
+                        ? 'bg-emerald-100 text-emerald-700 border-emerald-400 font-semibold'
+                        : 'bg-white text-red-600 border-red-300 hover:bg-red-100'}`}
+                  >
+                    <span className={`w-3.5 h-3.5 rounded border-2 flex items-center justify-center shrink-0
+                      ${checked ? 'bg-emerald-500 border-emerald-500' : 'border-red-400 bg-white'}`}>
+                      {checked && <span className="text-white font-bold" style={{ fontSize: '9px', lineHeight: 1 }}>✓</span>}
+                    </span>
+                    {s}
+                  </button>
+                )
+              })}
+            </div>
+            {selectedSkills.size > 0 && (
+              <button
+                type="button"
+                onClick={handleDownload}
+                disabled={isDownloading}
+                className="mt-2.5 flex items-center gap-2 px-4 py-2 bg-blue-900 hover:bg-blue-950
+                           disabled:opacity-60 text-white rounded-lg text-xs font-semibold transition-colors"
+              >
+                <Download size={13} />
+                {isDownloading
+                  ? 'Generating PDF…'
+                  : `Download Updated Resume (+${selectedSkills.size} skill${selectedSkills.size > 1 ? 's' : ''})`}
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* ── Expanded detail ───────────────────────────────────── */}

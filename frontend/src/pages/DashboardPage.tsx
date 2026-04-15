@@ -143,7 +143,7 @@ export default function DashboardPage() {
             { step: '01', title: 'Sign in', desc: 'Google OAuth — grants Drive access' },
             { step: '02', title: 'Upload JD', desc: 'Paste or upload — AI extracts structure' },
             { step: '03', title: 'Run Pipeline', desc: 'Fetches & parses all Drive resumes with AI' },
-            { step: '04', title: 'Get Results', desc: 'Ranked candidates, gaps & interview Questions' },
+            { step: '04', title: 'Get Results', desc: 'Ranked candidates & Resume improvement suggestions' },
           ].map(({ step, title, desc }) => (
             <div key={step} className="bg-slate-50 rounded-xl p-4">
               <div className="text-3xl font-black text-black-500 mb-2">{step}</div>

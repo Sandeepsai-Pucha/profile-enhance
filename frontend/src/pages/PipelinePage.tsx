@@ -3,124 +3,40 @@
 // Run the full 9-step resume matching pipeline for a selected JD.
 // No candidate data is stored — everything is live and ephemeral.
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { useSearchParams, Link, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import {
-  Cpu, FileText, AlertCircle, CheckCircle2, Clock,
-  Users, BarChart3, ChevronDown, FolderOpen, X,
-  FileSearch,
+  Cpu, FileText, AlertCircle,
+  Users, ChevronDown, FileSearch,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { fetchJDs, runPipeline, searchDriveFolders } from '../services/api'
-import type { JobDescription, PipelineResponse } from '../types'
-import CandidateResultCard from '../components/CandidateResultCard'
+import { fetchJDs, runPipeline, fetchIndexingStatus } from '../services/api'
+import type { JobDescription } from '../types'
 import BackButton from '../components/BackButton'
-
-// ── Pipeline step indicator ───────────────────────────────────
-const STEPS = [
-  'Loading JD',
-  'Reading resumes from local file',
-  'Parsing resumes with AI',
-  'Matching against JD',
-  'Filtering top candidates',
-  'Generating improvement tips',
-  'Generating interview questions',
-  'Ranking & summarising',
-]
-
-function StepList({ currentStep }: { currentStep: number }) {
-  return (
-    <div className="space-y-2">
-      {STEPS.map((step, i) => (
-        <div key={i} className="flex items-center gap-3">
-          <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0
-            ${i < currentStep ? 'bg-green-500'
-              : i === currentStep ? 'bg-cyan-400 animate-pulse'
-                : 'bg-slate-200'}`}>
-            {i < currentStep ? (
-              <CheckCircle2 size={12} className="text-white" />
-            ) : (
-              <span className={`text-[10px] font-bold ${i === currentStep ? 'text-white' : 'text-slate-400'}`}>
-                {i + 1}
-              </span>
-            )}
-          </div>
-          <span className={`text-sm ${i === currentStep ? 'text-blue-900 font-semibold' : i < currentStep ? 'text-green-700' : 'text-slate-400'}`}>
-            {step}
-          </span>
-        </div>
-      ))}
-    </div>
-  )
-}
 
 export default function PipelinePage() {
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
   const preselectedJdId = searchParams.get('jd') ? Number(searchParams.get('jd')) : null
   const [selectedJdId, setSelectedJdId] = useState<number | null>(preselectedJdId)
-
   const [topN, setTopN] = useState(5)
   const [minScore, setMinScore] = useState(40)
-  const [currentStep, setCurrentStep] = useState(-1)
-  const [result, setResult] = useState<PipelineResponse | null>(null)
 
   const { data: jds = [], isLoading: jdsLoading } = useQuery<JobDescription[]>({
     queryKey: ['jds'],
     queryFn: fetchJDs,
   })
 
-  // Auto-select preselected JD
+  const { data: indexingStatus } = useQuery({
+    queryKey: ['indexing-status'],
+    queryFn: fetchIndexingStatus,
+  })
+  const totalIndexed = indexingStatus?.total_indexed ?? 0
+
   useEffect(() => {
     if (preselectedJdId) setSelectedJdId(preselectedJdId)
   }, [preselectedJdId])
-
-  // Folder name search — debounced
-  // const handleFolderSearch = (value: string) => {
-  //   setFolderName(value)
-  //   setDriveFolderId('')
-  //   setShowDropdown(true)
-  //   if (folderDebounceRef.current) clearTimeout(folderDebounceRef.current)
-  //   if (!value.trim()) {
-  //     setFolderResults([])
-  //     setShowDropdown(false)
-  //     return
-  //   }
-  //   folderDebounceRef.current = setTimeout(async () => {
-  //     setFolderSearching(true)
-  //     try {
-  //       const results = await searchDriveFolders(value.trim())
-  //       setFolderResults(results)
-  //     } catch {
-  //       setFolderResults([])
-  //     } finally {
-  //       setFolderSearching(false)
-  //     }
-  //   }, 400)
-  // }
-
-  // const selectFolder = (folder: { id: string; name: string }) => {
-  //   setDriveFolderId(folder.id)
-  //   setFolderName(folder.name)
-  //   setFolderResults([])
-  //   setShowDropdown(false)
-  // }
-
-  // const clearFolder = () => {
-  //   setDriveFolderId('')
-  //   setFolderName('')
-  //   setFolderResults([])
-  //   setShowDropdown(false)
-  // }
-
-  // Simulate step progress while the pipeline is running
-  useEffect(() => {
-    if (currentStep < 0) return
-    if (currentStep >= STEPS.length) return
-    const t = setTimeout(() => setCurrentStep((s) => s + 1), 2200)
-    return () => clearTimeout(t)
-  }, [currentStep])
 
   const mutation = useMutation({
     mutationFn: () => runPipeline({
@@ -128,18 +44,11 @@ export default function PipelinePage() {
       top_n: topN,
       min_score: minScore,
     }),
-    onMutate: () => {
-      setCurrentStep(0)
-      setResult(null)
-    },
     onSuccess: (data) => {
-      setCurrentStep(STEPS.length)  // mark all done
-      setResult(data)
       toast.success(`Pipeline complete — ${data.top_candidates.length} top candidate${data.top_candidates.length !== 1 ? 's' : ''} found!`)
       navigate('/app/results', { state: { result: data } })
     },
     onError: (e: any) => {
-      setCurrentStep(-1)
       const msg = e?.response?.data?.detail || 'Pipeline failed. Please try again.'
       toast.error(msg)
     },
@@ -147,7 +56,6 @@ export default function PipelinePage() {
 
   const selectedJd = jds.find((j) => j.id === selectedJdId)
 
-  // ── Empty state ───────────────────────────────────────────
   if (!jdsLoading && jds.length === 0) {
     return (
       <div className="max-w-lg mx-auto text-center pt-20 space-y-4">
@@ -171,7 +79,7 @@ export default function PipelinePage() {
           <Cpu size={24} /> Resume Matching Pipeline
         </h2>
         <p className="text-slate-500 text-sm mt-1">
-          Reads resumes from the local file, parses them with AI, matches against the JD, and ranks candidates.
+          Matches indexed profiles against the selected JD and ranks candidates.
         </p>
       </div>
 
@@ -203,14 +111,30 @@ export default function PipelinePage() {
               </div>
             </div>
 
-            {/* Local file indicator */}
-            <div className="flex items-center gap-2.5 bg-sky-50 border border-sky-200 rounded-lg px-3 py-2.5">
-              <FileSearch size={15} className="text-sky-500 shrink-0" />
-              <div>
-                <p className="text-xs font-semibold text-sky-700">Using local resume file</p>
-                <p className="text-[11px] text-sky-500 mt-0.5">sample-resumes.txt</p>
+            {/* Indexed profiles indicator */}
+            {totalIndexed > 0 ? (
+              <div className="flex items-center gap-2.5 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2.5">
+                <FileSearch size={15} className="text-emerald-500 shrink-0" />
+                <div>
+                  <p className="text-xs font-semibold text-emerald-700">
+                    {totalIndexed} indexed profile{totalIndexed !== 1 ? 's' : ''} ready
+                  </p>
+                  <p className="text-[11px] text-emerald-600 mt-0.5">Fetched from DB via BM25 matching</p>
+                </div>
               </div>
-            </div>
+            ) : (
+              <div className="flex items-center gap-2.5 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5">
+                <AlertCircle size={15} className="text-amber-500 shrink-0" />
+                <div>
+                  <p className="text-xs font-semibold text-amber-700">No profiles indexed yet</p>
+                  <p className="text-[11px] text-amber-600 mt-0.5">
+                    Go to{' '}
+                    <Link to="/app/indexing" className="underline font-semibold">Index Resumes</Link>
+                    {' '}and run the pipeline first.
+                  </p>
+                </div>
+              </div>
+            )}
 
             {/* Top N */}
             <div>
@@ -272,88 +196,20 @@ export default function PipelinePage() {
           )}
         </div>
 
-        {/* ── Right panel: progress / results ───────────────── */}
+        {/* ── Right panel ───────────────────────────────────── */}
         <div className="lg:col-span-2 space-y-5">
 
-          {/* Running — show step list */}
+          {/* Running */}
           {mutation.isPending && (
-            <div className="bg-white border border-sky-200 rounded-2xl p-6 shadow-sm">
-              <div className="flex items-center gap-3 mb-5">
-                <div className="w-8 h-8 border-3 border-cyan-400 border-t-transparent rounded-full animate-spin" />
-                <div>
-                  <p className="font-semibold text-slate-700">Pipeline running…</p>
-                  <p className="text-xs text-slate-400">This may take 1-3 minutes depending on number of resumes</p>
-                </div>
-              </div>
-              <StepList currentStep={currentStep} />
+            <div className="bg-white border border-sky-200 rounded-2xl p-10 shadow-sm flex flex-col items-center justify-center gap-4">
+              <div className="w-10 h-10 border-4 border-cyan-400 border-t-transparent rounded-full animate-spin" />
+              <p className="font-semibold text-slate-700">Pipeline running…</p>
+              <p className="text-xs text-slate-400">This may take up to a minute</p>
             </div>
           )}
 
-          {/* Non-fatal errors */}
-          {result && result.errors.length > 0 && (
-            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4">
-              <p className="text-sm font-semibold text-amber-700 flex items-center gap-1.5 mb-2">
-                <AlertCircle size={15} /> {result.errors.length} file(s) could not be processed
-              </p>
-              <ul className="space-y-1">
-                {result.errors.map((e, i) => (
-                  <li key={i} className="text-xs text-amber-800">• {e}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {/* Results */}
-          {result && (
-            <>
-              {/* Stats bar */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                {[
-                  { icon: FileText, label: 'Files Found', value: result.stats.total_files_found },
-                  { icon: Users, label: 'Parsed', value: result.stats.total_parsed },
-                  { icon: BarChart3, label: 'Above Threshold', value: result.stats.total_above_threshold },
-                  { icon: Clock, label: 'Time (secs)', value: result.stats.processing_time_secs.toFixed(1) },
-                ].map(({ icon: Icon, label, value }) => (
-                  <div key={label} className="bg-white border border-slate-200 rounded-xl p-3 text-center">
-                    <Icon size={18} className="mx-auto text-sky-500 mb-1" />
-                    <p className="text-xl font-black text-slate-800">{value}</p>
-                    <p className="text-xs text-slate-400">{label}</p>
-                  </div>
-                ))}
-              </div>
-
-              {/* Executive summary */}
-              <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 rounded-2xl p-5 text-white">
-                <p className="text-xs font-semibold opacity-70 uppercase tracking-wide mb-2">
-                  AI Executive Summary
-                </p>
-                <p className="text-sm leading-relaxed">{result.executive_summary}</p>
-              </div>
-
-              {/* Candidate cards */}
-              {result.top_candidates.length === 0 ? (
-                <div className="bg-white border border-slate-200 rounded-2xl text-center py-14">
-                  <Users size={36} className="mx-auto text-slate-300 mb-3" />
-                  <p className="font-semibold text-slate-600">No candidates met the threshold</p>
-                  <p className="text-sm text-slate-400 mt-1">
-                    Try lowering the minimum match score or add more profiles to sample-resumes.txt.
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  <h3 className="font-semibold text-slate-700">
-                    Top {result.top_candidates.length} Candidate{result.top_candidates.length !== 1 ? 's' : ''}
-                  </h3>
-                  {result.top_candidates.map((c, i) => (
-                    <CandidateResultCard key={c.drive_file_id} result={c} rank={i + 1} jdTitle={result.jd.title} />
-                  ))}
-                </div>
-              )}
-            </>
-          )}
-
-          {/* Idle — no result yet */}
-          {!mutation.isPending && !result && (
+          {/* Idle */}
+          {!mutation.isPending && (
             <div className="bg-white border border-slate-200 rounded-2xl text-center py-20">
               <Cpu size={48} className="mx-auto text-slate-200 mb-4" />
               <p className="font-semibold text-slate-500">Configure and run the pipeline</p>

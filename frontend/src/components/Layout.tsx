@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
-import { Home, LayoutDashboard, FileText, Cpu, LogOut, ChevronRight, CalendarDays } from 'lucide-react'
+import { Home, LayoutDashboard, FileText, Cpu, LogOut, ChevronRight, Database } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { useIdleTimeout } from '../hooks/useIdleTimeout'
 import IdleWarningModal from './IdleWarningModal'
@@ -13,11 +13,11 @@ const WARN_AFTER_MS = 13 * 60 * 1000
 const WARNING_SECS = 120
 
 const NAV_ITEMS = [
-  { to: '/app/home', icon: Home, label: 'Home' },
-  { to: '/app/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/app/jobs', icon: FileText, label: 'Job Descriptions' },
-  { to: '/app/pipeline', icon: Cpu, label: 'Run Pipeline' },
-  // { to: '/app/interviewers', icon: CalendarDays,    label: 'Interviewers'     },
+  { to: '/app/home',      icon: Home,            label: 'Home'             },
+  { to: '/app/dashboard', icon: LayoutDashboard, label: 'Dashboard'        },
+  { to: '/app/jobs',      icon: FileText,        label: 'Job Descriptions' },
+  { to: '/app/indexing',  icon: Database,        label: 'Index Resumes'    },
+  { to: '/app/pipeline',  icon: Cpu,             label: 'Run Pipeline'     },
 ]
 
 export default function Layout() {
