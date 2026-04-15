@@ -1,20 +1,25 @@
 """
 routers/pipeline.py
 ────────────────────
-POST /pipeline/run
+POST /pipeline/run    — Vector-less RAG Matching Pipeline
+GET  /pipeline/folders — Search Google Drive folders
 
-Runs the full 9-step pipeline entirely in memory:
-  1. Load JD from DB
-  2. Fetch resumes from Google Drive
-  3. Parse each resume with AI
-  4. Match each resume against the JD
-  5. Filter by min_score threshold
-  6. Generate improvement suggestions for top candidates
-  7. Generate interview questions for top candidates
-  8. Rank + produce executive summary
-  9. Return full PipelineResponse (nothing written to DB)
+Two-pipeline architecture:
+  Indexing Pipeline (separate — see routers/indexing.py):
+    Drive/local → Parse → PageIndex tree → PostgreSQL
 
-No candidate data is persisted — results are ephemeral.
+  Matching Pipeline (this file):
+    1. Load JD from DB
+    2. Load indexed CandidateProfiles from DB
+    3. BM25 pre-filter → top-K candidates
+    4. LLM deep match on top-K (using stored PageIndex trees)
+    5. Filter by min_score threshold
+    6. Generate improvement suggestions for top-N
+    7. Generate interview questions for top-N
+    8. Rank + executive summary
+    9. Return PipelineResponse (nothing written to DB)
+
+Falls back to live local-file parsing if no indexed profiles exist yet.
 """
 
 import time
@@ -22,10 +27,12 @@ import concurrent.futures
 from typing import List, Dict, Any, Tuple, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import Response
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import JobDescription, User
+from models import JobDescription, User, CandidateProfile
 from schemas import (
     PipelineRequest, PipelineResponse,
     CandidateMatchResult, ParsedResume,
@@ -33,6 +40,9 @@ from schemas import (
     PipelineStats, JDOut,
 )
 from routers.auth import get_current_user
+from services.bm25_service import BM25, build_jd_query
+from services.matching_service import compute_match
+
 import os as _os
 _AI_PROVIDER = _os.getenv("AI_PROVIDER", "claude").lower()
 if _AI_PROVIDER == "claude":
@@ -43,6 +53,7 @@ if _AI_PROVIDER == "claude":
         generate_interview_questions,
         generate_executive_summary,
     )
+    generate_candidate_enrichment = None
 elif _AI_PROVIDER == "ollama":
     from services.ollama_service import (
         parse_resume,
@@ -51,6 +62,7 @@ elif _AI_PROVIDER == "ollama":
         generate_interview_questions,
         generate_executive_summary,
     )
+    generate_candidate_enrichment = None
 elif _AI_PROVIDER == "groq":
     from services.groq_service import (
         parse_resume,
@@ -58,6 +70,7 @@ elif _AI_PROVIDER == "groq":
         generate_improvement_suggestions,
         generate_interview_questions,
         generate_executive_summary,
+        generate_candidate_enrichment,
     )
 else:
     from services.ai_service import (
@@ -66,22 +79,25 @@ else:
         generate_improvement_suggestions,
         generate_interview_questions,
         generate_executive_summary,
+        generate_candidate_enrichment,
     )
 from services.google_drive_service import fetch_all_resumes, search_folders
 
 router = APIRouter(prefix="/pipeline", tags=["Pipeline"])
 
+# How many candidates BM25 pre-selects before LLM deep-matching
+BM25_PREFILTER_K = int(_os.getenv("BM25_PREFILTER_K", "50"))
+
 
 # ─────────────────────────────────────────────────────────────
-# LOCAL RESUME LOADER  (USE_LOCAL_RESUMES=true)
-# Reads a .txt file where profiles are separated by ===RESUME N===
-# Returns the same file_meta structure as fetch_all_resumes
+# FALLBACK: live local resume loader (used when no profiles indexed)
 # ─────────────────────────────────────────────────────────────
 def _load_local_resumes(file_path: str) -> Tuple[List[Dict[str, Any]], List[str]]:
     """
     Parse a local text file containing multiple resumes separated by ===RESUME N===.
-    Returns (resumes, errors) in the same shape as fetch_all_resumes().
+    Returns (resumes, errors) with the same shape as fetch_all_resumes().
     """
+    import re as _re
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             raw = f.read()
@@ -90,15 +106,12 @@ def _load_local_resumes(file_path: str) -> Tuple[List[Dict[str, Any]], List[str]
     except Exception as e:
         return [], [f"Failed to read local resumes file: {e}"]
 
-    import re as _re
-    # Split on ===RESUME N=== markers
     parts = _re.split(r"===RESUME\s*\d+===", raw, flags=_re.IGNORECASE)
     resumes = []
     for i, part in enumerate(parts):
         text = part.strip()
         if not text:
             continue
-        # Extract a name from first non-empty line for display
         first_line = next((l.strip() for l in text.splitlines() if l.strip()), f"Candidate {i}")
         name = first_line.replace("Name:", "").strip() if first_line.lower().startswith("name:") else first_line
         resumes.append({
@@ -108,12 +121,156 @@ def _load_local_resumes(file_path: str) -> Tuple[List[Dict[str, Any]], List[str]
             "webViewLink": "",
         })
 
-    print(f"[Pipeline] Loaded {len(resumes)} resume(s) from local file: {file_path}")
+    print(f"[Pipeline] Loaded {len(resumes)} resume(s) from local file (fallback): {file_path}")
     return resumes, []
 
 
 # ─────────────────────────────────────────────────────────────
-# HELPER: process one resume file through the full pipeline
+# HELPER: build a fake ParsedResume from a stored page_index tree
+# ─────────────────────────────────────────────────────────────
+def _page_index_to_resume_text(page_index: dict) -> str:
+    """
+    Serialise the stored PageIndex tree back to a readable text
+    that match_resume_to_jd() can consume.
+    """
+    identity  = page_index.get("identity", {})
+    skills    = page_index.get("skills", {})
+    exp       = page_index.get("experience", {})
+    edu       = page_index.get("education", {})
+    narrative = page_index.get("narrative", {})
+
+    lines: List[str] = []
+    lines.append(f"Name: {identity.get('name', '')}")
+    if identity.get("current_role"):
+        lines.append(f"Current Role: {identity['current_role']}")
+    if identity.get("experience_years"):
+        lines.append(f"Experience: {identity['experience_years']} years")
+    if identity.get("email"):
+        lines.append(f"Email: {identity['email']}")
+
+    all_skills = skills.get("all", [])
+    if all_skills:
+        lines.append(f"Skills: {', '.join(all_skills)}")
+
+    if edu.get("summary"):
+        lines.append(f"Education: {edu['summary']}")
+    if edu.get("certifications"):
+        lines.append(f"Certifications: {', '.join(edu['certifications'])}")
+
+    for item in (exp.get("timeline") or []):
+        title   = item.get("title", "")
+        company = item.get("company", "")
+        dur     = item.get("duration", "")
+        lines.append(f"\n{title} at {company} ({dur})")
+        for r in (item.get("key_responsibilities") or []):
+            lines.append(f"  - {r}")
+
+    if narrative.get("summary"):
+        lines.append(f"\nSummary: {narrative['summary']}")
+
+    return "\n".join(lines)
+
+
+def _page_index_to_parsed_dict(page_index: dict) -> dict:
+    """Convert stored page_index tree back to a parsed resume dict."""
+    identity  = page_index.get("identity", {})
+    skills    = page_index.get("skills", {})
+    exp       = page_index.get("experience", {})
+    edu       = page_index.get("education", {})
+    narrative = page_index.get("narrative", {})
+
+    work_history = [
+        {
+            "title":            item.get("title"),
+            "company":          item.get("company"),
+            "duration":         item.get("duration"),
+            "responsibilities": item.get("key_responsibilities") or [],
+        }
+        for item in (exp.get("timeline") or [])
+    ]
+
+    return {
+        "name":             identity.get("name", "Unknown"),
+        "email":            identity.get("email"),
+        "phone":            identity.get("phone"),
+        "current_role":     identity.get("current_role"),
+        "experience_years": identity.get("experience_years", 0),
+        "skills":           skills.get("all", []),
+        "education":        edu.get("summary"),
+        "certifications":   edu.get("certifications", []),
+        "work_history":     work_history,
+        "summary":          narrative.get("summary"),
+    }
+
+
+# ─────────────────────────────────────────────────────────────
+# HELPER: match one stored profile against JD (no LLM — pure DB data)
+# ─────────────────────────────────────────────────────────────
+def _match_profile(
+    profile:     CandidateProfile,
+    jd_data:     dict,
+    jd_raw_text: str,  # kept for signature compatibility; not used
+) -> Tuple[Optional[CandidateMatchResult], Optional[str]]:
+    """
+    Programmatic matching from stored page_index — zero LLM calls.
+    Skill comparison + experience + education scoring give deterministic results.
+    """
+    try:
+        page_index  = profile.page_index or {}
+        parsed_dict = _page_index_to_parsed_dict(page_index)
+
+        candidate_skills = parsed_dict.get("skills", [])
+        candidate_exp    = float(parsed_dict.get("experience_years") or 0)
+        candidate_edu    = parsed_dict.get("education") or ""
+
+        # Programmatic match (no API call)
+        match = compute_match(jd_data, candidate_skills, candidate_exp, candidate_edu)
+
+        work_history = [
+            WorkHistoryItem(
+                title           = wh.get("title"),
+                company         = wh.get("company"),
+                duration        = wh.get("duration"),
+                responsibilities= wh.get("responsibilities", []),
+            )
+            for wh in (parsed_dict.get("work_history") or [])
+        ]
+
+        resume_model = ParsedResume(
+            name             = parsed_dict.get("name", "Unknown"),
+            email            = parsed_dict.get("email"),
+            phone            = parsed_dict.get("phone"),
+            current_role     = parsed_dict.get("current_role"),
+            experience_years = candidate_exp,
+            skills           = candidate_skills,
+            education        = parsed_dict.get("education"),
+            certifications   = parsed_dict.get("certifications", []),
+            work_history     = work_history,
+            summary          = parsed_dict.get("summary"),
+        )
+
+        result = CandidateMatchResult(
+            file_name        = profile.file_name,
+            drive_file_id    = profile.source_file_id,
+            drive_file_url   = "",
+            parsed_resume    = resume_model,
+            match_score      = match["match_score"],
+            matched_skills   = match["matched_skills"],
+            missing_skills   = match["missing_skills"],
+            extra_skills     = match["extra_skills"],
+            experience_match = match["experience_match"],
+            ai_summary       = match["ai_summary"],
+            improvement_suggestions = [],
+            interview_questions     = [],
+        )
+        return result, None
+
+    except Exception as e:
+        return None, f"{profile.file_name}: {e}"
+
+
+# ─────────────────────────────────────────────────────────────
+# LEGACY HELPER: process one raw resume file (fallback path)
 # ─────────────────────────────────────────────────────────────
 def _process_one_resume(
     file_meta:   Dict[str, Any],
@@ -121,61 +278,63 @@ def _process_one_resume(
     jd_obj:      JobDescription,
     jd_raw_text: str = "",
 ) -> Tuple[Optional[CandidateMatchResult], Optional[str]]:
-    """
-    Parse + match one resume.
-    Returns (result, None) on success, (None, error_msg) on failure.
-    """
     try:
         resume_text = file_meta["text"]
+        parsed      = parse_resume(resume_text)
+        match       = match_resume_to_jd(jd_data, parsed, resume_text, jd_raw_text)
 
-        # Step 3 – Parse resume
-        parsed = parse_resume(resume_text)
-
-        # Step 4 – Match against JD (pass raw JD text as fallback context)
-        match = match_resume_to_jd(jd_data, parsed, resume_text, jd_raw_text)
-
-        # Build WorkHistory items
         work_history = [
             WorkHistoryItem(
-                title=wh.get("title"),
-                company=wh.get("company"),
-                duration=wh.get("duration"),
-                responsibilities=wh.get("responsibilities", []),
+                title           = wh.get("title"),
+                company         = wh.get("company"),
+                duration        = wh.get("duration"),
+                responsibilities= wh.get("responsibilities", []),
             )
             for wh in (parsed.get("work_history") or [])
         ]
-
         resume_model = ParsedResume(
-            name=parsed.get("name", "Unknown"),
-            email=parsed.get("email"),
-            phone=parsed.get("phone"),
-            current_role=parsed.get("current_role"),
-            experience_years=float(parsed.get("experience_years") or 0),
-            skills=parsed.get("skills", []),
-            education=parsed.get("education"),
-            certifications=parsed.get("certifications", []),
-            work_history=work_history,
-            summary=parsed.get("summary"),
+            name             = parsed.get("name", "Unknown"),
+            email            = parsed.get("email"),
+            phone            = parsed.get("phone"),
+            current_role     = parsed.get("current_role"),
+            experience_years = float(parsed.get("experience_years") or 0),
+            skills           = parsed.get("skills", []),
+            education        = parsed.get("education"),
+            certifications   = parsed.get("certifications", []),
+            work_history     = work_history,
+            summary          = parsed.get("summary"),
         )
-
         result = CandidateMatchResult(
-            file_name=file_meta["name"],
-            drive_file_id=file_meta["id"],
-            drive_file_url=file_meta.get("webViewLink", ""),
-            parsed_resume=resume_model,
-            match_score=match["match_score"],
-            matched_skills=match["matched_skills"],
-            missing_skills=match["missing_skills"],
-            extra_skills=match["extra_skills"],
-            experience_match=match["experience_match"],
-            ai_summary=match["ai_summary"],
-            improvement_suggestions=[],   # filled later for top-N only
-            interview_questions=[],        # filled later for top-N only
+            file_name       = file_meta["name"],
+            drive_file_id   = file_meta["id"],
+            drive_file_url  = file_meta.get("webViewLink", ""),
+            parsed_resume   = resume_model,
+            match_score     = match["match_score"],
+            matched_skills  = match["matched_skills"],
+            missing_skills  = match["missing_skills"],
+            extra_skills    = match["extra_skills"],
+            experience_match= match["experience_match"],
+            ai_summary      = match["ai_summary"],
+            improvement_suggestions = [],
+            interview_questions     = [],
         )
         return result, None
-
     except Exception as e:
         return None, f"{file_meta.get('name', 'Unknown')}: {e}"
+
+
+# ─────────────────────────────────────────────────────────────
+# GET /pipeline/folders
+# ─────────────────────────────────────────────────────────────
+@router.get("/folders")
+def search_drive_folders(
+    q:            str,
+    current_user: User    = Depends(get_current_user),
+):
+    """Search user's Google Drive for folder names matching the query."""
+    if not current_user.access_token:
+        raise HTTPException(status_code=403, detail="No Google Drive access token.")
+    return search_folders(current_user.access_token, q)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -184,111 +343,100 @@ def _process_one_resume(
 @router.post("/run", response_model=PipelineResponse)
 def run_pipeline(
     payload:      PipelineRequest,
-    db:           Session     = Depends(get_db),
-    current_user: User        = Depends(get_current_user),
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user),
 ):
     """
-    Execute the full resume-matching pipeline for a given JD.
+    Vector-less RAG Matching Pipeline.
 
-    • Fetches resumes from the logged-in user's Google Drive
-    • Parses and matches each resume against the JD
-    • Returns ranked top-N candidates with improvement tips and interview questions
-    • Nothing is written to the database
+    If indexed CandidateProfiles exist → BM25 pre-filter → LLM deep match.
+    If no profiles indexed yet → fallback to live local-file parsing.
     """
     start_time = time.time()
     errors: List[str] = []
 
     # ── Step 1: Load JD ──────────────────────────────────────
     jd_obj = db.query(JobDescription).filter(
-        JobDescription.id == payload.jd_id,
+        JobDescription.id         == payload.jd_id,
         JobDescription.uploaded_by == current_user.id,
     ).first()
 
     if not jd_obj:
         raise HTTPException(status_code=404, detail="Job description not found")
 
-    # Build JD data dict for AI functions
     jd_raw_text = jd_obj.jd_text or ""
     jd_data = {
-        "title":             jd_obj.title,
-        "jd_summary":        jd_obj.jd_summary or jd_obj.title,
-        "required_skills":   jd_obj.required_skills or [],
+        "title":              jd_obj.title,
+        "jd_summary":         jd_obj.jd_summary or jd_obj.title,
+        "required_skills":    jd_obj.required_skills or [],
         "nice_to_have_skills": jd_obj.nice_to_have_skills or [],
-        "experience_min":    jd_obj.experience_min,
-        "experience_max":    jd_obj.experience_max,
+        "experience_min":     jd_obj.experience_min,
+        "experience_max":     jd_obj.experience_max,
         "education_required": jd_obj.education_required,
-        "responsibilities":  jd_obj.responsibilities or [],
+        "responsibilities":   jd_obj.responsibilities or [],
     }
 
-    # Warn if JD has no extracted skills (AI parsing may have failed)
     if not jd_data["required_skills"]:
-        print(f"[Pipeline] WARNING: JD '{jd_obj.title}' has no required_skills. "
-              "Raw text will be used as fallback context for matching.")
+        print(f"[Pipeline] WARNING: JD '{jd_obj.title}' has no required_skills — using raw text fallback.")
 
-    # ── Step 2: Fetch resumes ─────────────────────────────────
-    use_local = _os.getenv("USE_LOCAL_RESUMES", "false").lower() == "true"
+    # ── Step 2: Load indexed profiles ────────────────────────
+    profiles: List[CandidateProfile] = (
+        db.query(CandidateProfile)
+        .filter(CandidateProfile.user_id == current_user.id)
+        .all()
+    )
 
-    if use_local:
-        # Load from local sample file instead of Drive (testing / token-saving mode)
-        local_file = _os.getenv("LOCAL_RESUMES_FILE", "../sample-resumes.txt")
-        local_path = _os.path.join(_os.path.dirname(__file__), "..", local_file)
-        local_path = _os.path.normpath(local_path)
-        resumes, fetch_errors = _load_local_resumes(local_path)
-    else:
-        if not current_user.access_token:
-            raise HTTPException(
-                status_code=403,
-                detail="No Google Drive access token. Please sign out and sign in again.",
-            )
-        resumes, fetch_errors = fetch_all_resumes(
-            current_user.access_token,
-            payload.drive_folder_id,
-        )
-
-    errors.extend(fetch_errors)
-
-    if not resumes:
-        detail = (
-            "No resume files found in local sample file." if use_local
-            else "No resume files found in Google Drive. Upload PDF/DOCX/TXT resumes and try again."
-        )
-        if fetch_errors:
-            detail += " Errors: " + "; ".join(fetch_errors)
-        raise HTTPException(status_code=404, detail=detail)
-
-    # ── Steps 3+4: Parse + match all resumes ─────────────────
     all_results: List[CandidateMatchResult] = []
+    total_files_found = 0
 
-    # Ollama processes one request at a time — run sequentially to avoid timeouts.
-    # Gemini can handle parallel requests — use ThreadPoolExecutor.
-    if _os.getenv("AI_PROVIDER", "gemini").lower() == "ollama":
-        for file_meta in resumes:
-            result, err = _process_one_resume(file_meta, jd_data, jd_obj, jd_raw_text)
+    if profiles:
+        print(f"[Pipeline] Matching {len(profiles)} indexed profiles (programmatic, no LLM)")
+        total_files_found = len(profiles)
+
+        # ── BM25 pre-filter: narrow to top-K before scoring ──
+        # Only kicks in when the pool is larger than BM25_PREFILTER_K
+        if len(profiles) > BM25_PREFILTER_K:
+            bm25 = BM25()
+            bm25.fit([p.bm25_corpus or "" for p in profiles])
+            jd_query = build_jd_query(jd_data)
+            top_k_indices = {idx for idx, _ in bm25.get_top_k(jd_query, k=BM25_PREFILTER_K)}
+            profiles_to_score = [p for i, p in enumerate(profiles) if i in top_k_indices]
+            print(f"[Pipeline] BM25 pre-filter: {len(profiles)} → {len(profiles_to_score)} candidates")
+        else:
+            profiles_to_score = profiles
+
+        # Score shortlisted profiles — pure Python, instant
+        for profile in profiles_to_score:
+            result, err = _match_profile(profile, jd_data, jd_raw_text)
             if err:
                 errors.append(err)
             elif result:
                 all_results.append(result)
+
+        # Log scores for debugging
+        score_log = sorted(
+            [(r.parsed_resume.name, r.match_score) for r in all_results],
+            key=lambda x: x[1], reverse=True
+        )
+        print(f"[Pipeline] Scores: {score_log}")
+
     else:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-            future_map = {
-                executor.submit(_process_one_resume, file_meta, jd_data, jd_obj, jd_raw_text): file_meta
-                for file_meta in resumes
-            }
-            for future in concurrent.futures.as_completed(future_map):
-                result, err = future.result()
-                if err:
-                    errors.append(err)
-                elif result:
-                    all_results.append(result)
+        # No indexed profiles — tell the user to run the indexing pipeline first
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "No indexed candidate profiles found. "
+                "Go to 'Index Resumes' and click 'Run Index Pipeline' to index resumes from "
+                "your Google Drive folder before running the matching pipeline."
+            ),
+        )
 
     # ── Step 5: Filter by min_score ───────────────────────────
     above_threshold = [r for r in all_results if r.match_score >= payload.min_score]
 
-    # Safety fallback: if nothing passes the threshold, return best available
-    # candidates (up to top_n) and add an informational error message
     if not above_threshold and all_results:
-        ranked_all = sorted(all_results, key=lambda r: r.match_score, reverse=True)
-        best_score = ranked_all[0].match_score
+        ranked_all  = sorted(all_results, key=lambda r: r.match_score, reverse=True)
+        best_score  = ranked_all[0].match_score
         errors.append(
             f"No candidates scored ≥ {payload.min_score:.0f}%. "
             f"Showing best available result(s) instead (top score: {best_score:.0f}%). "
@@ -296,53 +444,41 @@ def run_pipeline(
         )
         above_threshold = ranked_all[:payload.top_n]
 
-    # Log scores for debugging
-    score_summary = ", ".join(
-        f"{r.parsed_resume.name}={r.match_score:.0f}" for r in all_results
-    )
-    print(f"[Pipeline] Scores: {score_summary or 'none'} | threshold={payload.min_score}")
+    print(f"[Pipeline] threshold={payload.min_score} | above={len(above_threshold)} / {len(all_results)}")
 
-    # ── Step 6+7+8: Top-N enrichment (sequential to manage API rate) ──
+    # ── Steps 6+7+8: Top-N enrichment ─────────────────────────
     ranked = sorted(above_threshold, key=lambda r: r.match_score, reverse=True)
     top_n  = ranked[: payload.top_n]
 
-    for candidate in top_n:
+    # ── Step 6: Parallel improvement suggestions only ────────────
+    def _enrich_candidate(candidate: CandidateMatchResult) -> CandidateMatchResult:
         parsed = candidate.parsed_resume
+        resume_data = {
+            "name":         parsed.name,
+            "current_role": parsed.current_role,
+            "skills":       parsed.skills,
+        }
 
-        # Step 6 – Improvement suggestions
-        suggestions = generate_improvement_suggestions(
-            jd_data=jd_data,
-            resume_data={
-                "name":         parsed.name,
-                "current_role": parsed.current_role,
-                "skills":       parsed.skills,
-            },
-            missing_skills=candidate.missing_skills,
-            match_score=candidate.match_score,
+        candidate.improvement_suggestions = generate_improvement_suggestions(
+            jd_data        = jd_data,
+            resume_data    = resume_data,
+            missing_skills = candidate.missing_skills,
+            match_score    = candidate.match_score,
         )
-        candidate.improvement_suggestions = suggestions
+        candidate.interview_questions = []
+        print(f"[Pipeline] Suggestions OK for {parsed.name}: "
+              f"{len(candidate.improvement_suggestions)} suggestions")
+        return candidate
 
-        # Step 7 – Interview questions
-        questions = generate_interview_questions(
-            job_title=jd_obj.title,
-            jd_summary=jd_data["jd_summary"],
-            required_skills=jd_data["required_skills"],
-            matched_skills=candidate.matched_skills,
-            missing_skills=candidate.missing_skills,
-            candidate_name=parsed.name,
-            candidate_role=parsed.current_role or "Unknown",
-        )
-        candidate.interview_questions = [
-            InterviewQuestion(**q) if isinstance(q, dict) else q
-            for q in questions
-        ]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        top_n = list(executor.map(_enrich_candidate, top_n))
 
     # ── Step 9: Executive summary ─────────────────────────────
     summary_data = [
         {
-            "name":         c.parsed_resume.name,
-            "current_role": c.parsed_resume.current_role or "Unknown",
-            "score":        c.match_score,
+            "name":           c.parsed_resume.name,
+            "current_role":   c.parsed_resume.current_role or "Unknown",
+            "score":          c.match_score,
             "matched_skills": c.matched_skills,
             "missing_skills": c.missing_skills,
         }
@@ -355,14 +491,107 @@ def run_pipeline(
     elapsed = round(time.time() - start_time, 1)
 
     return PipelineResponse(
-        jd=JDOut.model_validate(jd_obj),
-        top_candidates=top_n,
-        executive_summary=executive_summary,
-        stats=PipelineStats(
-            total_files_found=len(resumes),
-            total_parsed=len(all_results),
-            total_above_threshold=len(above_threshold),
-            processing_time_secs=elapsed,
+        jd              = JDOut.model_validate(jd_obj),
+        top_candidates  = top_n,
+        executive_summary = executive_summary,
+        stats = PipelineStats(
+            total_files_found     = total_files_found,
+            total_parsed          = len(all_results),
+            total_above_threshold = len(above_threshold),
+            processing_time_secs  = elapsed,
         ),
-        errors=errors,
+        errors = errors,
+    )
+
+
+# ─────────────────────────────────────────────────────────────
+# GET /pipeline/profile/{source_file_id}  — inspect parsed page_index as JSON
+# ─────────────────────────────────────────────────────────────
+@router.get("/profile/{source_file_id:path}")
+def get_profile_json(
+    source_file_id: str,
+    db:             Session = Depends(get_db),
+    current_user:   User    = Depends(get_current_user),
+):
+    """
+    Return the full stored page_index JSON for a candidate profile.
+    Useful for debugging what was parsed and stored during indexing.
+    """
+    profile = db.query(CandidateProfile).filter(
+        CandidateProfile.source_file_id == source_file_id,
+        CandidateProfile.user_id        == current_user.id,
+    ).first()
+
+    if not profile:
+        all_ids = [
+            p.source_file_id for p in
+            db.query(CandidateProfile.source_file_id)
+            .filter(CandidateProfile.user_id == current_user.id)
+            .all()
+        ]
+        raise HTTPException(
+            status_code=404,
+            detail=f"Profile not found for '{source_file_id}'. Available: {all_ids}"
+        )
+
+    return {
+        "source_file_id":  profile.source_file_id,
+        "file_name":       profile.file_name,
+        "candidate_name":  profile.candidate_name,
+        "current_role":    profile.current_role,
+        "experience_years": profile.experience_years,
+        "skills":          profile.skills,
+        "page_index":      profile.page_index,
+    }
+
+
+# ─────────────────────────────────────────────────────────────
+# POST /pipeline/generate-resume
+# ─────────────────────────────────────────────────────────────
+class GenerateResumeRequest(BaseModel):
+    source_file_id: str
+    skills_to_add:  List[str] = []
+
+
+@router.post("/generate-resume")
+def generate_updated_resume(
+    payload:      GenerateResumeRequest,
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user),
+):
+    """
+    Generate an updated resume PDF for a candidate with selected skills added.
+    Returns a downloadable PDF file.
+    """
+    print(f"[GenerateResume] user={current_user.id} source_file_id='{payload.source_file_id}' skills={payload.skills_to_add}")
+    profile = db.query(CandidateProfile).filter(
+        CandidateProfile.source_file_id == payload.source_file_id,
+        CandidateProfile.user_id        == current_user.id,
+    ).first()
+
+    if not profile:
+        # Log all stored IDs to help diagnose mismatches
+        all_ids = [
+            p.source_file_id for p in
+            db.query(CandidateProfile.source_file_id)
+            .filter(CandidateProfile.user_id == current_user.id)
+            .all()
+        ]
+        print(f"[GenerateResume] source_file_id not found: '{payload.source_file_id}' | stored IDs: {all_ids}")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Candidate profile not found for id='{payload.source_file_id}'. Stored IDs: {all_ids}"
+        )
+
+    try:
+        from services.resume_generator import build_resume_docx
+        docx_bytes = build_resume_docx(profile.page_index, payload.skills_to_add)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate resume: {e}")
+
+    safe_name = (profile.candidate_name or "resume").replace(" ", "_")
+    return Response(
+        content        = docx_bytes,
+        media_type     = "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers        = {"Content-Disposition": f'attachment; filename="{safe_name}_updated.docx"'},
     )

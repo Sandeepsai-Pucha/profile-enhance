@@ -149,6 +149,8 @@ and return ONLY a valid JSON object with EXACTLY this structure (no markdown):
       "title":            "Software Engineer",
       "company":          "ABC Corp",
       "duration":         "Jan 2021 – Present",
+      "technologies":     "React.js, Node.js, AWS Lambda, MySQL",
+      "description":      "One sentence project/role description",
       "responsibilities": ["Built REST APIs", "Led team of 3"]
     }}
   ],

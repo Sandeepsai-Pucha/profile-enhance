@@ -95,6 +95,46 @@ export interface PipelineResponse {
   errors: string[];
 }
 
+// ── Indexing (CandidateProfile) ───────────────────────────────
+export interface CandidateProfileOut {
+  id:               number
+  source_file_id:   string
+  file_name:        string
+  candidate_name:   string | null
+  current_role:     string | null
+  experience_years: number
+  skills:           string[]
+  indexed_at:       string | null
+}
+
+export interface IndexingResult {
+  total:   number
+  indexed: number
+  skipped: number
+  updated: number
+  errors:  string[]
+}
+
+export interface IndexingStatusOut {
+  total_indexed: number
+  profiles:      CandidateProfileOut[]
+}
+
+export interface ResumeFileOut {
+  filename:       string
+  file_size_kb:   number
+  uploaded_at:    string
+  is_indexed:     boolean
+  candidate_name: string | null
+}
+
+export interface ResumesListOut {
+  total_files:   number
+  indexed_count: number
+  pending_count: number
+  files:         ResumeFileOut[]
+}
+
 // ── Email Report ──────────────────────────────────────────────
 export interface SendReportRequest {
   to_email: string;

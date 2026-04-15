@@ -8,13 +8,15 @@ import { useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
   Users, FileText, BarChart3, Clock, Briefcase,
-  GraduationCap, Mail, Phone, CheckCircle, XCircle,
-  Sparkles, Lightbulb, ExternalLink, CalendarPlus, Cpu, Download,
+  GraduationCap, Mail, CheckCircle, XCircle,
+  Sparkles, Lightbulb, ExternalLink, CalendarPlus, Cpu, Download, PlusCircle, Send, Copy, Check,
 } from 'lucide-react'
 import type { PipelineResponse, CandidateMatchResult } from '../types'
 import BackButton from '../components/BackButton'
-import InterviewQuestionsPanel from '../components/InterviewQuestionsPanel'
+import ScheduleInterviewModal from '../components/ScheduleInterviewModal'
+import SendEmailModal from '../components/SendEmailModal'
 import { downloadCandidatePDF } from '../utils/downloadPDF'
+import { generateUpdatedResume } from '../services/api'
 
 // ── Score ring ────────────────────────────────────────────────
 function ScoreRing({ score }: { score: number }) {
@@ -28,13 +30,62 @@ function ScoreRing({ score }: { score: number }) {
   )
 }
 
+// ── Copy details button ───────────────────────────────────────
+function CopyButton({ candidate }: { candidate: CandidateMatchResult }) {
+  const [copied, setCopied] = useState(false)
+  const r = candidate.parsed_resume
+
+  const handleCopy = () => {
+    const lines = [
+      `Name: ${r.name}`,
+      r.current_role ? `Role: ${r.current_role}` : '',
+      `Experience: ${r.experience_years} year${r.experience_years !== 1 ? 's' : ''}`,
+      r.education ? `Education: ${r.education}` : '',
+      r.email ? `Email: ${r.email}` : '',
+      `Match Score: ${candidate.match_score.toFixed(0)}%`,
+      `Experience Match: ${candidate.experience_match}`,
+      candidate.matched_skills.length ? `Matched Skills: ${candidate.matched_skills.join(', ')}` : '',
+      candidate.missing_skills.length ? `Missing Skills: ${candidate.missing_skills.join(', ')}` : '',
+    ].filter(Boolean).join('\n')
+
+    navigator.clipboard.writeText(lines).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
+
+  return (
+    <button
+      onClick={handleCopy}
+      title="Copy details"
+      className="flex items-center gap-1 text-xs text-slate-400 hover:text-sky-600 transition-colors"
+    >
+      {copied ? <Check size={13} className="text-green-500" /> : <Copy size={13} />}
+      {copied ? 'Copied' : 'Copy'}
+    </button>
+  )
+}
+
 // ── Resume panel (left) ───────────────────────────────────────
-function ResumePanel({ candidate }: { candidate: CandidateMatchResult }) {
+function ResumePanel({
+  candidate,
+  selectedSkills,
+  onToggleSkill,
+}: {
+  candidate: CandidateMatchResult
+  selectedSkills: Set<string>
+  onToggleSkill: (skill: string) => void
+}) {
   const r = candidate.parsed_resume
   const expColor =
     candidate.experience_match === 'Good fit' ? 'bg-green-100 text-green-700' :
       candidate.experience_match === 'Over-qualified' ? 'bg-sky-100 text-sky-700' :
         'bg-amber-100 text-amber-700'
+
+  // Merge selected missing skills into the skills list for display
+  const addedSkills = Array.from(selectedSkills)
+  const allSkills = [...r.skills, ...addedSkills.filter(s => !r.skills.includes(s))]
+
   return (
     <div className="space-y-4">
 
@@ -66,7 +117,10 @@ function ResumePanel({ candidate }: { candidate: CandidateMatchResult }) {
 
       {/* Contact & details */}
       <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-3">
-        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Details</p>
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Details</p>
+          <CopyButton candidate={candidate} />
+        </div>
         <div className="space-y-2.5">
           <div className="flex items-center gap-2.5 text-sm text-slate-700">
             <Clock size={14} className="text-slate-400 shrink-0" />
@@ -82,12 +136,6 @@ function ResumePanel({ candidate }: { candidate: CandidateMatchResult }) {
             <div className="flex items-center gap-2.5 text-sm text-slate-700">
               <Mail size={14} className="text-slate-400 shrink-0" />
               <span className="truncate">{r.email}</span>
-            </div>
-          )}
-          {r.phone && (
-            <div className="flex items-center gap-2.5 text-sm text-slate-700">
-              <Phone size={14} className="text-slate-400 shrink-0" />
-              {r.phone}
             </div>
           )}
         </div>
@@ -106,6 +154,8 @@ function ResumePanel({ candidate }: { candidate: CandidateMatchResult }) {
       {/* Skills */}
       <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
         <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Skills</p>
+
+        {/* All skills (existing + newly added) */}
         <div>
           <p className="text-xs font-semibold text-green-600 mb-2 flex items-center gap-1">
             <CheckCircle size={11} /> Matched ({candidate.matched_skills.length})
@@ -116,18 +166,56 @@ function ResumePanel({ candidate }: { candidate: CandidateMatchResult }) {
             ))}
           </div>
         </div>
-        {candidate.missing_skills.length > 0 && (
+
+        {/* Added skills appear here */}
+        {addedSkills.length > 0 && (
           <div>
-            <p className="text-xs font-semibold text-red-500 mb-2 flex items-center gap-1">
-              <XCircle size={11} /> Missing ({candidate.missing_skills.length})
+            <p className="text-xs font-semibold text-emerald-600 mb-2 flex items-center gap-1">
+              <PlusCircle size={11} /> Added to Resume ({addedSkills.length})
             </p>
             <div className="flex flex-wrap gap-1">
-              {candidate.missing_skills.map(s => (
-                <span key={s} className="text-xs bg-red-50 text-red-600 border border-red-200 px-2 py-0.5 rounded-full">{s}</span>
+              {addedSkills.map(s => (
+                <button
+                  key={s}
+                  onClick={() => onToggleSkill(s)}
+                  title="Click to remove"
+                  className="text-xs bg-emerald-100 text-emerald-700 border border-emerald-400 px-2 py-0.5 rounded-full font-semibold hover:bg-red-50 hover:text-red-500 hover:border-red-300 transition-colors"
+                >
+                  ✓ {s} ×
+                </button>
               ))}
             </div>
           </div>
         )}
+
+        {/* Missing skills — clickable to add */}
+        {candidate.missing_skills.length > 0 && (
+          <div>
+            <p className="text-xs font-semibold text-red-500 mb-1 flex items-center gap-1">
+              <XCircle size={11} /> Missing ({candidate.missing_skills.filter(s => !selectedSkills.has(s)).length})
+            </p>
+            <p className="text-[11px] text-slate-400 mb-2">Click a skill to add it to the resume</p>
+            <div className="flex flex-wrap gap-1">
+              {candidate.missing_skills
+                .filter(s => !selectedSkills.has(s))
+                .map(s => (
+                  <button
+                    key={s}
+                    onClick={() => onToggleSkill(s)}
+                    className="text-xs bg-red-50 text-red-600 border border-red-200 px-2 py-0.5 rounded-full
+                               hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-300
+                               transition-colors flex items-center gap-1 cursor-pointer"
+                  >
+                    <PlusCircle size={10} /> {s}
+                  </button>
+                ))}
+              {candidate.missing_skills.every(s => selectedSkills.has(s)) && (
+                <span className="text-xs text-emerald-600 font-medium">All missing skills added ✓</span>
+              )}
+            </div>
+          </div>
+        )}
+
         {candidate.extra_skills.length > 0 && (
           <div>
             <p className="text-xs font-semibold text-sky-500 mb-2 flex items-center gap-1">
@@ -174,20 +262,53 @@ function ResumePanel({ candidate }: { candidate: CandidateMatchResult }) {
 }
 
 // ── Right panel — suggestions + questions ─────────────────────
-function RightPanel({ candidate, jdTitle }: { candidate: CandidateMatchResult; jdTitle: string }) {
+function RightPanel({
+  candidate,
+  jdTitle,
+  selectedSkills,
+  onDownload,
+  isDownloading,
+}: {
+  candidate: CandidateMatchResult
+  jdTitle: string
+  selectedSkills: Set<string>
+  onDownload: () => void
+  isDownloading: boolean
+}) {
   const [scheduleOpen, setScheduleOpen] = useState(false)
+  const [emailOpen, setEmailOpen] = useState(false)
 
   return (
     <div className="space-y-4">
 
       {/* Action buttons */}
       <div className="flex justify-end gap-2 flex-wrap">
+        {selectedSkills.size > 0 && (
+          <button
+            onClick={onDownload}
+            disabled={isDownloading}
+            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700
+                       disabled:opacity-60 text-white rounded-xl text-sm font-semibold transition-colors shadow-sm"
+          >
+            <Download size={15} />
+            {isDownloading
+              ? 'Generating…'
+              : `Download Updated Resume (+${selectedSkills.size} skill${selectedSkills.size > 1 ? 's' : ''})`}
+          </button>
+        )}
         <button
           onClick={() => downloadCandidatePDF(candidate, jdTitle)}
           className="flex items-center gap-2 px-4 py-2 bg-blue-900 hover:bg-blue-950
                      text-white rounded-xl text-sm font-semibold transition-colors shadow-sm"
         >
           <Download size={15} /> Download Candidate Report
+        </button>
+        <button
+          onClick={() => setEmailOpen(true)}
+          className="flex items-center gap-2 px-4 py-2 bg-violet-600 hover:bg-violet-700
+                     text-white rounded-xl text-sm font-semibold transition-colors shadow-sm"
+        >
+          <Send size={15} /> Send Email
         </button>
         <button
           onClick={() => setScheduleOpen(true)}
@@ -218,19 +339,21 @@ function RightPanel({ candidate, jdTitle }: { candidate: CandidateMatchResult; j
         </div>
       )}
 
-      {/* Interview questions accordion */}
-      <InterviewQuestionsPanel
-        questions={candidate.interview_questions}
-        candidateName={candidate.parsed_resume.name}
-      />
-
-      {/* {scheduleOpen && (
+      {scheduleOpen && (
         <ScheduleInterviewModal
           candidate={candidate}
           jdTitle={jdTitle}
           onClose={() => setScheduleOpen(false)}
         />
-      )} */}
+      )}
+
+      {emailOpen && (
+        <SendEmailModal
+          candidate={candidate}
+          jdTitle={jdTitle}
+          onClose={() => setEmailOpen(false)}
+        />
+      )}
     </div>
   )
 }
@@ -241,6 +364,9 @@ export default function ResultsPage() {
   const navigate = useNavigate()
   const pipelineResult = location.state?.result as PipelineResponse | undefined
   const [selectedIdx, setSelectedIdx] = useState(0)
+  // Per-candidate selected skills map: candidateFileId → Set<skill>
+  const [skillsMap, setSkillsMap] = useState<Record<string, Set<string>>>({})
+  const [isDownloading, setIsDownloading] = useState(false)
 
   if (!pipelineResult || pipelineResult.top_candidates.length === 0) {
     return (
@@ -260,6 +386,35 @@ export default function ResultsPage() {
   }
 
   const candidate = pipelineResult.top_candidates[selectedIdx]
+  const candidateKey = candidate.drive_file_id
+  const selectedSkills = skillsMap[candidateKey] ?? new Set<string>()
+
+  const handleToggleSkill = (skill: string) => {
+    setSkillsMap(prev => {
+      const current = new Set(prev[candidateKey] ?? [])
+      current.has(skill) ? current.delete(skill) : current.add(skill)
+      return { ...prev, [candidateKey]: current }
+    })
+  }
+
+  const handleDownloadUpdatedResume = async () => {
+    setIsDownloading(true)
+    try {
+      const blob = await generateUpdatedResume(candidate.drive_file_id, Array.from(selectedSkills))
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `${candidate.parsed_resume.name.replace(/\s+/g, '_')}_updated.docx`
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      alert(`Failed to generate resume: ${err instanceof Error ? err.message : 'Unknown error'}`)
+    } finally {
+      setIsDownloading(false)
+    }
+  }
 
   return (
     <div className="space-y-5">
@@ -346,12 +501,22 @@ export default function ResultsPage() {
 
         {/* Left — Resume (2/5) */}
         <div className="xl:col-span-2">
-          <ResumePanel candidate={candidate} />
+          <ResumePanel
+            candidate={candidate}
+            selectedSkills={selectedSkills}
+            onToggleSkill={handleToggleSkill}
+          />
         </div>
 
         {/* Right — Suggestions + Questions (3/5) */}
         <div className="xl:col-span-3">
-          <RightPanel candidate={candidate} jdTitle={pipelineResult.jd.title} />
+          <RightPanel
+            candidate={candidate}
+            jdTitle={pipelineResult.jd.title}
+            selectedSkills={selectedSkills}
+            onDownload={handleDownloadUpdatedResume}
+            isDownloading={isDownloading}
+          />
         </div>
       </div>
     </div>

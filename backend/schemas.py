@@ -141,6 +141,58 @@ class PipelineResponse(BaseModel):
 
 
 # ═══════════════════════════════════════════════════════════════
+#  INDEXING  (CandidateProfile — persisted)
+# ═══════════════════════════════════════════════════════════════
+
+class IndexingRequest(BaseModel):
+    """Trigger the indexing pipeline for local resumes."""
+    pass   # no payload needed for local file indexing
+
+
+class IndexingResult(BaseModel):
+    total:   int
+    indexed: int
+    skipped: int = 0
+    updated: int = 0
+    errors:  List[str]
+
+
+class CandidateProfileOut(BaseModel):
+    """Public view of an indexed candidate profile."""
+    id:               int
+    source_file_id:   str
+    file_name:        str
+    candidate_name:   Optional[str]
+    current_role:     Optional[str]
+    experience_years: float
+    skills:           List[str]
+    indexed_at:       Optional[datetime]
+
+    model_config = {"from_attributes": True}
+
+
+class IndexingStatusOut(BaseModel):
+    total_indexed: int
+    profiles:      List[CandidateProfileOut]
+
+
+class ResumeFileOut(BaseModel):
+    """A resume file on disk — may or may not be indexed yet."""
+    filename:       str
+    file_size_kb:   float
+    uploaded_at:    str          # ISO datetime string
+    is_indexed:     bool
+    candidate_name: Optional[str] = None   # set when indexed
+
+
+class ResumesListOut(BaseModel):
+    total_files:   int
+    indexed_count: int
+    pending_count: int
+    files:         List[ResumeFileOut]
+
+
+# ═══════════════════════════════════════════════════════════════
 #  INTERVIEW SCHEDULING  (ephemeral — never stored in DB)
 # ═══════════════════════════════════════════════════════════════
 

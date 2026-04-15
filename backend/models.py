@@ -2,8 +2,13 @@
 models.py
 ─────────
 SQLAlchemy ORM table definitions.
-Only JD is persisted.  All resume / candidate data is processed in-memory
-by the pipeline and never written to the DB.
+
+Persisted:
+  - User           (Google OAuth data)
+  - JobDescription (AI-parsed JD fields)
+  - CandidateProfile (PageIndex tree for vector-less RAG)
+
+All pipeline matching output (CandidateMatchResult etc.) is still ephemeral.
 """
 
 from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Float, Boolean, JSON
@@ -27,7 +32,8 @@ class User(Base):
     refresh_token = Column(Text)
     created_at    = Column(DateTime(timezone=True), server_default=func.now())
 
-    job_descriptions = relationship("JobDescription", back_populates="uploaded_by_user")
+    job_descriptions   = relationship("JobDescription", back_populates="uploaded_by_user")
+    candidate_profiles = relationship("CandidateProfile", back_populates="user")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -60,8 +66,48 @@ class JobDescription(Base):
     uploaded_by_user = relationship("User", back_populates="job_descriptions")
 
 
+
+
+
 # ─────────────────────────────────────────────────────────────
-# 3. SKILL CATEGORY  (taxonomy helper — optional)
+# 3. CANDIDATE PROFILE  (Indexing Pipeline output — PageIndex tree)
+# ─────────────────────────────────────────────────────────────
+class CandidateProfile(Base):
+    """
+    Persisted resume index built by the Indexing Pipeline.
+    Stores the hierarchical PageIndex tree as JSON + a flat BM25 corpus string.
+
+    The Matching Pipeline:
+      1. Loads all profiles for the user
+      2. BM25 pre-filters to top-K candidates
+      3. Feeds page_index tree into LLM for deep matching
+    """
+    __tablename__ = "candidate_profiles"
+
+    id              = Column(Integer, primary_key=True, index=True)
+    source_file_id  = Column(String(256), nullable=False, index=True)   # "local-0", drive file id, etc.
+    file_name       = Column(String(512), nullable=False)
+    user_id         = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+
+    # PageIndex tree — full structured resume representation
+    page_index      = Column(JSON, nullable=False, default=dict)
+
+    # BM25 corpus — flattened text for BM25 pre-filtering
+    bm25_corpus     = Column(Text, nullable=False, default="")
+
+    # Fast-access metadata (extracted from page_index for SQL queries)
+    candidate_name  = Column(String(256))
+    current_role    = Column(String(256))
+    experience_years = Column(Float, default=0.0)
+    skills          = Column(JSON, default=list)   # flat skill list for quick display
+
+    indexed_at      = Column(DateTime(timezone=True), default=func.now(), onupdate=func.now())
+
+    user = relationship("User", back_populates="candidate_profiles")
+
+
+# ─────────────────────────────────────────────────────────────
+# 4. SKILL CATEGORY  (taxonomy helper — optional)
 # ─────────────────────────────────────────────────────────────
 class SkillCategory(Base):
     __tablename__ = "skill_categories"

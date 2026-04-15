@@ -19,11 +19,11 @@ from typing import List, Dict, Any
 import anthropic
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-CLAUDE_MODEL      = os.getenv("CLAUDE_MODEL", "claude-haiku-4-5")
+CLAUDE_MODEL      = os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
 
 _client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
-MAX_RESUME_CHARS = 6000
+MAX_RESUME_CHARS = 12000  # raised — long resumes with many projects need more context
 
 
 # ─────────────────────────────────────────────────────────────
@@ -136,6 +136,8 @@ and return ONLY a valid JSON object with EXACTLY this structure (no markdown):
       "title":            "Software Engineer",
       "company":          "ABC Corp",
       "duration":         "Jan 2021 – Present",
+      "technologies":     "React.js, Node.js, AWS Lambda, MySQL",
+      "description":      "One sentence project/role description",
       "responsibilities": ["Built REST APIs", "Led team of 3"]
     }}
   ],
@@ -343,6 +345,77 @@ category:   Technical | Gap | Behavioural | Situational
     except Exception as e:
         print(f"[Claude] generate_interview_questions failed: {e}")
         return []
+
+
+# ═══════════════════════════════════════════════════════════════
+# 5b. COMBINED ENRICHMENT (suggestions + questions in ONE call)
+# ═══════════════════════════════════════════════════════════════
+def generate_candidate_enrichment(
+    jd_data:         Dict[str, Any],
+    resume_data:     Dict[str, Any],
+    missing_skills:  List[str],
+    match_score:     float,
+    job_title:       str,
+    jd_summary:      str,
+    required_skills: List[str],
+    matched_skills:  List[str],
+    candidate_name:  str,
+    candidate_role:  str,
+) -> Dict[str, Any]:
+    """
+    Single Claude call returning both improvement_suggestions and
+    interview_questions — halves the enrichment API calls.
+    """
+    prompt = f"""You are a technical recruiter and resume coach. Return ONLY a JSON object
+with EXACTLY these two keys (no markdown, no explanation):
+
+{{
+  "improvement_suggestions": [
+    "Specific, actionable suggestion 1",
+    "Specific, actionable suggestion 2"
+  ],
+  "interview_questions": [
+    {{"question": "...", "category": "Technical",   "difficulty": "Medium"}},
+    {{"question": "...", "category": "Gap",         "difficulty": "Easy"}},
+    {{"question": "...", "category": "Behavioural", "difficulty": "Medium"}},
+    {{"question": "...", "category": "Situational", "difficulty": "Hard"}}
+  ]
+}}
+
+=== CONTEXT ===
+Role: {job_title}
+JD Summary: {jd_summary}
+Required Skills: {', '.join(required_skills) or 'Not specified'}
+Candidate: {candidate_name} ({candidate_role})
+Match Score: {match_score:.0f}/100
+Matched Skills: {', '.join(matched_skills) or 'None'}
+Missing Skills: {', '.join(missing_skills) or 'None'}
+Candidate Skills: {', '.join(resume_data.get('skills', [])[:15])}
+
+=== RULES ===
+improvement_suggestions: 4-5 specific, actionable items targeting the missing skills and gaps.
+interview_questions: exactly 8 questions — 3 Technical, 2 Gap, 2 Behavioural, 1 Situational.
+difficulty values: Easy | Medium | Hard
+category values: Technical | Gap | Behavioural | Situational
+
+Return ONLY the JSON object.
+"""
+    try:
+        raw  = _call_claude(prompt)
+        data = _parse_json(raw, {})
+        suggestions = data.get("improvement_suggestions", [])
+        questions   = data.get("interview_questions", [])
+        if not isinstance(suggestions, list):
+            suggestions = []
+        if not isinstance(questions, list):
+            questions = []
+        return {
+            "improvement_suggestions": [str(s) for s in suggestions[:6]],
+            "interview_questions":     questions[:8],
+        }
+    except Exception as e:
+        print(f"[Claude] generate_candidate_enrichment failed: {e}")
+        return {"improvement_suggestions": [], "interview_questions": []}
 
 
 # ═══════════════════════════════════════════════════════════════
