@@ -14,7 +14,8 @@ import {
   uploadResumes, fetchResumeFiles,
   deleteResumeFile, runIndexing, reindexAll, resetIndexing,
 } from '../services/api'
-import type { ResumeFileOut, IndexingResult } from '../types'
+import type { ResumeFileOut, IndexingResult, Stream } from '../types'
+import { ALL_STREAMS } from '../types'
 import BackButton from '../components/BackButton'
 
 // ─────────────────────────────────────────────────────────────
@@ -140,7 +141,14 @@ export default function IndexingPage() {
   const [dragOver, setDragOver] = useState(false)
   const [showConfirmReset, setShowConfirmReset] = useState(false)
   const [deletingFile, setDeletingFile] = useState<string | null>(null)
+  const [selectedStreams, setSelectedStreams] = useState<Stream[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const toggleStream = (stream: Stream) => {
+    setSelectedStreams((prev) =>
+      prev.includes(stream) ? prev.filter((s) => s !== stream) : [...prev, stream]
+    )
+  }
 
   // ── Queries ──────────────────────────────────────────────
   const { data: resumeList, isLoading: listLoading } = useQuery({
@@ -163,7 +171,7 @@ export default function IndexingPage() {
   })
 
   const indexMutation = useMutation({
-    mutationFn: runIndexing,
+    mutationFn: (streams: Stream[]) => runIndexing({ streams }),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['resume-files'] })
       const msg = `${data.indexed} new indexed, ${data.skipped} skipped`
@@ -177,7 +185,7 @@ export default function IndexingPage() {
   })
 
   const reindexMutation = useMutation({
-    mutationFn: reindexAll,
+    mutationFn: (streams: Stream[]) => reindexAll({ streams }),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['resume-files'] })
       toast.success(`Re-indexed ${data.indexed} file(s)`)
@@ -311,9 +319,44 @@ export default function IndexingPage() {
           <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-3">
             <h3 className="font-semibold text-slate-700 text-sm">Pipeline Controls</h3>
 
+            {/* Stream selector */}
+            <div>
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
+                Drive Streams to Index
+              </p>
+              <div className="space-y-1.5">
+                {ALL_STREAMS.map((stream) => (
+                  <label
+                    key={stream}
+                    className="flex items-center gap-2.5 px-3 py-2 rounded-lg border border-slate-200
+                               hover:bg-slate-50 cursor-pointer transition-colors select-none"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedStreams.includes(stream)}
+                      onChange={() => toggleStream(stream)}
+                      className="w-4 h-4 accent-blue-900 cursor-pointer"
+                    />
+                    <span className="text-sm font-medium text-slate-700">{stream}</span>
+                    <span className={`ml-auto text-[10px] px-1.5 py-0.5 rounded-full font-semibold
+                      ${stream === 'Digital'    ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                      : stream === 'QA'         ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                      :                          'bg-violet-50 text-violet-700 border border-violet-200'}`}>
+                      {stream === 'Digital' ? 'Drive' : stream === 'QA' ? 'Drive' : 'Drive'}
+                    </span>
+                  </label>
+                ))}
+              </div>
+              {selectedStreams.length === 0 && (
+                <p className="text-[11px] text-slate-400 mt-1.5">
+                  No streams selected — only local uploads will be indexed.
+                </p>
+              )}
+            </div>
+
             {/* Run incremental */}
             <button
-              onClick={() => indexMutation.mutate()}
+              onClick={() => indexMutation.mutate(selectedStreams)}
               disabled={isBusy}
               className="w-full flex items-center justify-center gap-2 py-3 bg-blue-900 text-white
                          rounded-xl font-semibold text-sm hover:bg-blue-950
@@ -328,7 +371,7 @@ export default function IndexingPage() {
 
             {/* Re-index all */}
             <button
-              onClick={() => reindexMutation.mutate()}
+              onClick={() => reindexMutation.mutate(selectedStreams)}
               disabled={isBusy}
               className="w-full flex items-center justify-center gap-2 py-2.5 border border-sky-200
                          text-sky-700 rounded-xl text-sm font-medium hover:bg-sky-50

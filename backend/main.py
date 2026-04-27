@@ -110,6 +110,7 @@ def _migrate_candidate_profiles():
         ("experience_years", "FLOAT"),
         ("skills",           "TEXT"),
         ("indexed_at",       "TIMESTAMP"),
+        ("stream",           "VARCHAR(32)"),
     ]
     with engine.connect() as conn:
         for col_name, col_type in new_columns:

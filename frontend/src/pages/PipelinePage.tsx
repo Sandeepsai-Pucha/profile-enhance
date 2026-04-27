@@ -12,7 +12,8 @@ import {
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { fetchJDs, runPipeline, fetchIndexingStatus } from '../services/api'
-import type { JobDescription } from '../types'
+import type { JobDescription, Stream } from '../types'
+import { ALL_STREAMS } from '../types'
 import BackButton from '../components/BackButton'
 
 export default function PipelinePage() {
@@ -22,6 +23,13 @@ export default function PipelinePage() {
   const [selectedJdId, setSelectedJdId] = useState<number | null>(preselectedJdId)
   const [topN, setTopN] = useState(5)
   const [minScore, setMinScore] = useState(40)
+  const [selectedStreams, setSelectedStreams] = useState<Stream[]>([])
+
+  const toggleStream = (stream: Stream) => {
+    setSelectedStreams((prev) =>
+      prev.includes(stream) ? prev.filter((s) => s !== stream) : [...prev, stream]
+    )
+  }
 
   const { data: jds = [], isLoading: jdsLoading } = useQuery<JobDescription[]>({
     queryKey: ['jds'],
@@ -40,9 +48,10 @@ export default function PipelinePage() {
 
   const mutation = useMutation({
     mutationFn: () => runPipeline({
-      jd_id: selectedJdId!,
-      top_n: topN,
+      jd_id:    selectedJdId!,
+      top_n:    topN,
       min_score: minScore,
+      streams:  selectedStreams,
     }),
     onSuccess: (data) => {
       toast.success(`Pipeline complete — ${data.top_candidates.length} top candidate${data.top_candidates.length !== 1 ? 's' : ''} found!`)
@@ -109,6 +118,41 @@ export default function PipelinePage() {
                 </select>
                 <ChevronDown size={14} className="absolute right-3 top-3.5 text-slate-400 pointer-events-none" />
               </div>
+            </div>
+
+            {/* Stream selector */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">
+                Candidate Streams
+              </label>
+              <div className="space-y-1.5">
+                {ALL_STREAMS.map((stream) => (
+                  <label
+                    key={stream}
+                    className="flex items-center gap-2.5 px-3 py-2 rounded-lg border border-slate-200
+                               hover:bg-slate-50 cursor-pointer transition-colors select-none"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedStreams.includes(stream)}
+                      onChange={() => toggleStream(stream)}
+                      className="w-4 h-4 accent-blue-900 cursor-pointer"
+                    />
+                    <span className="text-sm font-medium text-slate-700">{stream}</span>
+                    <span className={`ml-auto text-[10px] px-1.5 py-0.5 rounded-full font-semibold
+                      ${stream === 'Digital'    ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                      : stream === 'QA'         ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                      :                          'bg-violet-50 text-violet-700 border border-violet-200'}`}>
+                      {stream}
+                    </span>
+                  </label>
+                ))}
+              </div>
+              {selectedStreams.length === 0 && (
+                <p className="text-[11px] text-slate-400 mt-1">
+                  No filter — all indexed profiles will be matched.
+                </p>
+              )}
             </div>
 
             {/* Indexed profiles indicator */}

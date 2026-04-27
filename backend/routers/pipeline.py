@@ -379,12 +379,18 @@ def run_pipeline(
     if not jd_data["required_skills"]:
         print(f"[Pipeline] WARNING: JD '{jd_obj.title}' has no required_skills — using raw text fallback.")
 
-    # ── Step 2: Load indexed profiles ────────────────────────
-    profiles: List[CandidateProfile] = (
-        db.query(CandidateProfile)
-        .filter(CandidateProfile.user_id == current_user.id)
-        .all()
+    # ── Step 2: Load indexed profiles (with optional stream filter) ──
+    profile_query = db.query(CandidateProfile).filter(
+        CandidateProfile.user_id == current_user.id
     )
+    selected_streams = [s for s in (payload.streams or []) if s]
+    if selected_streams:
+        profile_query = profile_query.filter(
+            CandidateProfile.stream.in_(selected_streams)
+        )
+        print(f"[Pipeline] Stream filter: {selected_streams}")
+
+    profiles: List[CandidateProfile] = profile_query.all()
 
     all_results: List[CandidateMatchResult] = []
     total_files_found = 0
@@ -392,6 +398,28 @@ def run_pipeline(
     if profiles:
         print(f"[Pipeline] Matching {len(profiles)} indexed profiles (programmatic, no LLM)")
         total_files_found = len(profiles)
+
+        # ── Experience pre-filter ──────────────────────────────
+        # Exclude candidates whose experience is clearly outside the JD range.
+        # Keeps candidates within [experience_min - 1, experience_max + 8] to
+        # allow slight under/over-qualification while still reducing noise.
+        exp_min = float(jd_data.get("experience_min") or 0)
+        exp_max = float(jd_data.get("experience_max") or 99)
+        if exp_min > 0 or exp_max < 99:
+            lower_bound = max(0.0, exp_min - 1.0)
+            upper_bound = exp_max + 8.0
+            before_exp_filter = len(profiles)
+            profiles = [
+                p for p in profiles
+                if lower_bound <= float(p.experience_years or 0) <= upper_bound
+            ]
+            filtered_out = before_exp_filter - len(profiles)
+            if filtered_out:
+                print(
+                    f"[Pipeline] Experience pre-filter ({exp_min}–{exp_max} yrs): "
+                    f"removed {filtered_out} out-of-range profiles, "
+                    f"{len(profiles)} remain"
+                )
 
         # ── BM25 pre-filter: narrow to top-K before scoring ──
         # Only kicks in when the pool is larger than BM25_PREFILTER_K

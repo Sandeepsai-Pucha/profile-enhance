@@ -101,6 +101,9 @@ class CandidateProfile(Base):
     experience_years = Column(Float, default=0.0)
     skills          = Column(JSON, default=list)   # flat skill list for quick display
 
+    # Stream classification: "Digital" | "QA" | "Salesforce" | None
+    stream          = Column(String(32), nullable=True, index=True)
+
     indexed_at      = Column(DateTime(timezone=True), default=func.now(), onupdate=func.now())
 
     user = relationship("User", back_populates="candidate_profiles")

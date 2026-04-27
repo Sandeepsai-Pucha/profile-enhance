@@ -80,11 +80,15 @@ export interface PipelineStats {
   processing_time_secs: number;
 }
 
+export type Stream = "Salesforce" | "Digital" | "QA";
+export const ALL_STREAMS: Stream[] = ["Salesforce", "Digital", "QA"];
+
 export interface PipelineRequest {
   jd_id: number;
   drive_folder_id?: string;
   top_n?: number;
   min_score?: number;
+  streams?: Stream[]; // filter candidates by stream(s); empty = all
 }
 
 export interface PipelineResponse {
@@ -97,42 +101,47 @@ export interface PipelineResponse {
 
 // ── Indexing (CandidateProfile) ───────────────────────────────
 export interface CandidateProfileOut {
-  id:               number
-  source_file_id:   string
-  file_name:        string
-  candidate_name:   string | null
-  current_role:     string | null
-  experience_years: number
-  skills:           string[]
-  indexed_at:       string | null
+  id: number;
+  source_file_id: string;
+  file_name: string;
+  candidate_name: string | null;
+  current_role: string | null;
+  experience_years: number;
+  skills: string[];
+  stream: Stream | null;
+  indexed_at: string | null;
+}
+
+export interface IndexingRequest {
+  streams?: Stream[]; // streams to index from Drive; empty = local only
 }
 
 export interface IndexingResult {
-  total:   number
-  indexed: number
-  skipped: number
-  updated: number
-  errors:  string[]
+  total: number;
+  indexed: number;
+  skipped: number;
+  updated: number;
+  errors: string[];
 }
 
 export interface IndexingStatusOut {
-  total_indexed: number
-  profiles:      CandidateProfileOut[]
+  total_indexed: number;
+  profiles: CandidateProfileOut[];
 }
 
 export interface ResumeFileOut {
-  filename:       string
-  file_size_kb:   number
-  uploaded_at:    string
-  is_indexed:     boolean
-  candidate_name: string | null
+  filename: string;
+  file_size_kb: number;
+  uploaded_at: string;
+  is_indexed: boolean;
+  candidate_name: string | null;
 }
 
 export interface ResumesListOut {
-  total_files:   number
-  indexed_count: number
-  pending_count: number
-  files:         ResumeFileOut[]
+  total_files: number;
+  indexed_count: number;
+  pending_count: number;
+  files: ResumeFileOut[];
 }
 
 // ── Email Report ──────────────────────────────────────────────
@@ -155,26 +164,26 @@ export interface SendReportResponse {
 
 // ── Interview Scheduling ──────────────────────────────────────
 export interface Interviewer {
-  name:           string
-  email:          string
-  available_from: string   // "09:00"
-  available_to:   string   // "17:00"
+  name: string;
+  email: string;
+  available_from: string; // "09:00"
+  available_to: string; // "17:00"
 }
 
 export interface ScheduleInterviewRequest {
-  candidate_name:    string
-  candidate_email:   string | null
-  interviewer_email: string
-  jd_title:          string
-  resume_url:        string
-  ai_summary:        string
-  start_datetime:    string   // ISO 8601
-  end_datetime:      string   // ISO 8601
-  timezone?:         string
+  candidate_name: string;
+  candidate_email: string | null;
+  interviewer_email: string;
+  jd_title: string;
+  resume_url: string;
+  ai_summary: string;
+  start_datetime: string; // ISO 8601
+  end_datetime: string; // ISO 8601
+  timezone?: string;
 }
 
 export interface ScheduleInterviewResponse {
-  event_id:   string
-  event_link: string
-  message:    string
+  event_id: string;
+  event_link: string;
+  message: string;
 }
