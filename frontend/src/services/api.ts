@@ -11,6 +11,7 @@ import type {
   ScheduleInterviewResponse,
   SendReportRequest,
   SendReportResponse,
+  IndexingRequest,
   IndexingResult,
   IndexingStatusOut,
   ResumesListOut,
@@ -155,11 +156,11 @@ export const fetchResumeFiles = (): Promise<ResumesListOut> =>
 export const deleteResumeFile = (filename: string): Promise<{ message: string }> =>
   api.delete(`/indexing/resumes/${encodeURIComponent(filename)}`).then((r) => r.data);
 
-export const runIndexing = (): Promise<IndexingResult> =>
-  api.post("/indexing/run").then((r) => r.data);
+export const runIndexing = (payload: IndexingRequest = {}): Promise<IndexingResult> =>
+  api.post("/indexing/run", payload).then((r) => r.data);
 
-export const reindexAll = (): Promise<IndexingResult> =>
-  api.post("/indexing/reindex").then((r) => r.data);
+export const reindexAll = (payload: IndexingRequest = {}): Promise<IndexingResult> =>
+  api.post("/indexing/reindex", payload).then((r) => r.data);
 
 export const fetchIndexingStatus = (): Promise<IndexingStatusOut> =>
   api.get("/indexing/status").then((r) => r.data);

@@ -149,6 +149,7 @@ def _upsert(
     data:           dict,
     user_id:        int,
     db:             Session,
+    stream:         Optional[str] = None,
 ) -> Tuple[bool, str]:
     """Write one parsed resume result to the DB (upsert)."""
     try:
@@ -169,6 +170,7 @@ def _upsert(
             existing.current_role     = parsed.get("current_role")
             existing.experience_years = float(parsed.get("experience_years") or 0)
             existing.skills           = parsed.get("skills") or []
+            existing.stream           = stream
             existing.indexed_at       = datetime.utcnow()
             db.commit()
             return True, f"Updated: {file_name}"
@@ -183,6 +185,7 @@ def _upsert(
                 current_role     = parsed.get("current_role"),
                 experience_years = float(parsed.get("experience_years") or 0),
                 skills           = parsed.get("skills") or [],
+                stream           = stream,
                 indexed_at       = datetime.utcnow(),
             ))
             db.commit()
@@ -201,12 +204,13 @@ def index_one_resume(
     resume_text:    str,
     user_id:        int,
     db:             Session,
+    stream:         Optional[str] = None,
 ) -> Tuple[bool, str]:
     """Parse one resume and upsert into DB. Returns (success, message)."""
     fid, fname, data, err = _parse_only(source_file_id, file_name, resume_text)
     if err:
         return False, f"Failed to index {file_name}: {err}"
-    return _upsert(fid, fname, data, user_id, db)
+    return _upsert(fid, fname, data, user_id, db, stream=stream)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -251,6 +255,7 @@ def index_local_resumes(
     file_path: str,
     user_id:   int,
     db:        Session,
+    stream:    Optional[str] = None,
 ) -> Dict[str, Any]:
     try:
         resumes = _split_local_file(file_path)
@@ -269,7 +274,7 @@ def index_local_resumes(
             errors.append(f"Failed to parse {fname}: {err}")
             print(f"[Indexing] PARSE ERROR: {fname}: {err}")
             continue
-        ok, msg = _upsert(sid, fname, data, user_id, db)
+        ok, msg = _upsert(sid, fname, data, user_id, db, stream=stream)
         if ok:
             updated += 1 if msg.startswith("Updated") else 0
             indexed += 0 if msg.startswith("Updated") else 1
@@ -290,6 +295,7 @@ def index_drive_folder(
     user_id:      int,
     db:           Session,
     skip_indexed: bool = True,
+    stream:       Optional[str] = None,
 ) -> Dict[str, Any]:
     from services.google_drive_service import list_resume_files as drive_list_files
     from services.google_drive_service import download_and_parse_resume
@@ -338,7 +344,7 @@ def index_drive_folder(
         if err:
             errors.append(f"Failed to parse {fname}: {err}")
             continue
-        ok, msg = _upsert(sid, fname, data, user_id, db)
+        ok, msg = _upsert(sid, fname, data, user_id, db, stream=stream)
         if ok:
             updated += 1 if msg.startswith("Updated") else 0
             indexed += 0 if msg.startswith("Updated") else 1
@@ -356,6 +362,7 @@ def index_resume_folder(
     user_id:      int,
     db:           Session,
     skip_indexed: bool = True,
+    stream:       Optional[str] = None,
 ) -> Dict[str, Any]:
     from services.resume_storage_service import list_resume_files, extract_text_from_file
 
@@ -405,7 +412,7 @@ def index_resume_folder(
             errors.append(f"Failed to parse {fname}: {err}")
             print(f"[Indexing] PARSE ERROR: {fname}: {err}")
             continue
-        ok, msg = _upsert(sid, fname, data, user_id, db)
+        ok, msg = _upsert(sid, fname, data, user_id, db, stream=stream)
         if ok:
             updated += 1 if msg.startswith("Updated") else 0
             indexed += 0 if msg.startswith("Updated") else 1

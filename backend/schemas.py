@@ -123,6 +123,7 @@ class PipelineRequest(BaseModel):
     drive_folder_id: Optional[str] = None
     top_n:           int   = Field(5,    ge=1, le=20)
     min_score:       float = Field(40.0, ge=0, le=100)
+    streams:         List[str] = []   # filter by stream(s) — empty means all indexed profiles
 
 
 class PipelineStats(BaseModel):
@@ -144,9 +145,12 @@ class PipelineResponse(BaseModel):
 #  INDEXING  (CandidateProfile — persisted)
 # ═══════════════════════════════════════════════════════════════
 
+VALID_STREAMS = {"Digital", "QA", "Salesforce"}
+
+
 class IndexingRequest(BaseModel):
-    """Trigger the indexing pipeline for local resumes."""
-    pass   # no payload needed for local file indexing
+    """Trigger the indexing pipeline — optionally scoped to specific streams."""
+    streams: List[str] = []   # e.g. ["Digital", "QA"] — empty means all / local only
 
 
 class IndexingResult(BaseModel):
@@ -166,6 +170,7 @@ class CandidateProfileOut(BaseModel):
     current_role:     Optional[str]
     experience_years: float
     skills:           List[str]
+    stream:           Optional[str] = None
     indexed_at:       Optional[datetime]
 
     model_config = {"from_attributes": True}

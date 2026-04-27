@@ -11,19 +11,24 @@ Endpoints:
   POST   /indexing/reindex             Force re-index all files in the folder
   GET    /indexing/status              Count + list of indexed candidate profiles
   DELETE /indexing/reset               Remove all indexed profiles (keeps files on disk)
+
+Stream-based Drive folder IDs (set in .env):
+  DIGITAL_DRIVE_FOLDER_ID    — folder for Digital stream resumes
+  QA_DRIVE_FOLDER_ID         — folder for QA stream resumes
+  SALESFORCE_DRIVE_FOLDER_ID — folder for Salesforce stream resumes
 """
 
 import os
-from typing import List
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Body
 from sqlalchemy.orm import Session
 
 from database import get_db
 from models import CandidateProfile
 from schemas import (
-    IndexingResult, IndexingStatusOut, CandidateProfileOut,
-    ResumeFileOut, ResumesListOut,
+    IndexingRequest, IndexingResult, IndexingStatusOut, CandidateProfileOut,
+    ResumeFileOut, ResumesListOut, VALID_STREAMS,
 )
 from routers.auth import get_current_user
 from services.indexing_service import index_resume_folder, index_local_resumes, index_drive_folder
@@ -32,6 +37,13 @@ from services.resume_storage_service import (
     list_resume_files,
     delete_resume_file,
 )
+
+# ── Sample Drive folder IDs per stream (replace with real IDs when available) ──
+STREAM_DRIVE_FOLDERS = {
+    "Digital":    os.getenv("DIGITAL_DRIVE_FOLDER_ID",    "sample_digital_drive_folder_id"),
+    "QA":         os.getenv("QA_DRIVE_FOLDER_ID",         "sample_qa_drive_folder_id"),
+    "Salesforce": os.getenv("SALESFORCE_DRIVE_FOLDER_ID", "sample_salesforce_drive_folder_id"),
+}
 
 router = APIRouter(prefix="/indexing", tags=["Indexing"])
 
@@ -190,58 +202,72 @@ def delete_resume(
 # ─────────────────────────────────────────────────────────────
 @router.post("/run", response_model=IndexingResult)
 def run_indexing(
-    db:           Session = Depends(get_db),
-    current_user          = Depends(get_current_user),
+    payload:      IndexingRequest = Body(default=IndexingRequest()),
+    db:           Session         = Depends(get_db),
+    current_user                  = Depends(get_current_user),
 ):
     """
     Incremental indexing — indexes only NEW files not yet in the DB.
 
-    Sources (both combined):
-      1. Default Google Drive folder (DEFAULT_DRIVE_FOLDER_ID in .env)
-      2. Locally uploaded resumes (via /indexing/upload)
+    Sources:
+      1. Stream-specific Google Drive folders for each selected stream
+         (Digital / QA / Salesforce checkboxes — uses STREAM_DRIVE_FOLDERS mapping)
+      2. Locally uploaded resumes (always included)
+
+    Pass {"streams": ["Digital", "QA"]} to index from those Drive folders.
+    Pass {"streams": []} (default) to skip Drive and only process local uploads.
     """
-    print(f"[Indexing] Incremental run for user {current_user.id}")
+    streams = [s for s in payload.streams if s in VALID_STREAMS]
+    print(f"[Indexing] Incremental run for user {current_user.id} | streams={streams or 'local only'}")
 
-    # 1. Index from Google Drive folder
-    drive_folder_id = os.getenv("DEFAULT_DRIVE_FOLDER_ID", "")
-    drive_result    = {"total": 0, "indexed": 0, "skipped": 0, "updated": 0, "errors": []}
+    combined = {"total": 0, "indexed": 0, "skipped": 0, "updated": 0, "errors": []}
 
-    if drive_folder_id and current_user.access_token:
-        print(f"[Indexing] Scanning Drive folder: {drive_folder_id}")
+    # 1. Index from each selected stream's Drive folder
+    for stream in streams:
+        folder_id = STREAM_DRIVE_FOLDERS.get(stream, "")
+        if not folder_id:
+            combined["errors"].append(f"{stream}: no Drive folder configured.")
+            continue
+
+        if not current_user.access_token:
+            combined["errors"].append(
+                f"{stream}: no Google access token — sign out and sign in again."
+            )
+            continue
+
+        print(f"[Indexing] Scanning {stream} Drive folder: {folder_id}")
         try:
-            drive_result = index_drive_folder(
+            result = index_drive_folder(
                 access_token = current_user.access_token,
-                folder_id    = drive_folder_id,
+                folder_id    = folder_id,
                 user_id      = current_user.id,
                 db           = db,
                 skip_indexed = True,
+                stream       = stream,
             )
+            combined = _merge_results(combined, result)
         except Exception as e:
-            drive_result["errors"].append(f"Drive indexing failed unexpectedly: {e}")
-            print(f"[Indexing] Drive error: {e}")
-    elif drive_folder_id and not current_user.access_token:
-        drive_result["errors"].append(
-            "Drive folder configured but no Google access token — sign out and sign in again."
-        )
+            combined["errors"].append(f"{stream} Drive indexing failed: {e}")
+            print(f"[Indexing] {stream} Drive error: {e}")
 
-    # 2. Index locally uploaded files
+    # 2. Index locally uploaded files (no stream tag — stream=None)
     try:
         local_result = index_resume_folder(
             user_id      = current_user.id,
             db           = db,
             skip_indexed = True,
+            stream       = None,
         )
+        combined = _merge_results(combined, local_result)
     except Exception as e:
-        local_result = {"total": 0, "indexed": 0, "skipped": 0, "updated": 0,
-                        "errors": [f"Local indexing failed unexpectedly: {e}"]}
+        combined["errors"].append(f"Local indexing failed unexpectedly: {e}")
         print(f"[Indexing] Local error: {e}")
 
-    result = _merge_results(drive_result, local_result)
     print(
-        f"[Indexing] Done — {result['indexed']} new, "
-        f"{result['skipped']} skipped, {len(result['errors'])} errors"
+        f"[Indexing] Done — {combined['indexed']} new, "
+        f"{combined['skipped']} skipped, {len(combined['errors'])} errors"
     )
-    return IndexingResult(**result)
+    return IndexingResult(**combined)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -249,32 +275,48 @@ def run_indexing(
 # ─────────────────────────────────────────────────────────────
 @router.post("/reindex", response_model=IndexingResult)
 def reindex_all(
-    db:           Session = Depends(get_db),
-    current_user          = Depends(get_current_user),
+    payload:      IndexingRequest = Body(default=IndexingRequest()),
+    db:           Session         = Depends(get_db),
+    current_user                  = Depends(get_current_user),
 ):
     """
-    Full re-index — re-parses ALL files from Drive + local uploads,
-    overwriting existing DB profiles.
+    Full re-index — re-parses ALL files from the selected stream Drive folders
+    + local uploads, overwriting existing DB profiles.
+
+    Pass {"streams": ["Digital", "QA"]} to re-index from those Drive folders.
     """
-    print(f"[Indexing] Full reindex for user {current_user.id}")
+    streams = [s for s in payload.streams if s in VALID_STREAMS]
+    print(f"[Indexing] Full reindex for user {current_user.id} | streams={streams or 'local only'}")
 
-    # 1. Re-index from Drive
-    drive_folder_id = os.getenv("DEFAULT_DRIVE_FOLDER_ID", "")
-    drive_result    = {"total": 0, "indexed": 0, "skipped": 0, "updated": 0, "errors": []}
+    combined = {"total": 0, "indexed": 0, "skipped": 0, "updated": 0, "errors": []}
 
-    if drive_folder_id and current_user.access_token:
-        print(f"[Indexing] Re-scanning Drive folder: {drive_folder_id}")
+    # 1. Re-index from each selected stream's Drive folder
+    for stream in streams:
+        folder_id = STREAM_DRIVE_FOLDERS.get(stream, "")
+        if not folder_id:
+            combined["errors"].append(f"{stream}: no Drive folder configured.")
+            continue
+
+        if not current_user.access_token:
+            combined["errors"].append(
+                f"{stream}: no Google access token — sign out and sign in again."
+            )
+            continue
+
+        print(f"[Indexing] Re-scanning {stream} Drive folder: {folder_id}")
         try:
-            drive_result = index_drive_folder(
+            result = index_drive_folder(
                 access_token = current_user.access_token,
-                folder_id    = drive_folder_id,
+                folder_id    = folder_id,
                 user_id      = current_user.id,
                 db           = db,
                 skip_indexed = False,
+                stream       = stream,
             )
+            combined = _merge_results(combined, result)
         except Exception as e:
-            drive_result["errors"].append(f"Drive re-indexing failed unexpectedly: {e}")
-            print(f"[Indexing] Drive error: {e}")
+            combined["errors"].append(f"{stream} Drive re-indexing failed: {e}")
+            print(f"[Indexing] {stream} Drive error: {e}")
 
     # 2. Re-index local uploads
     try:
@@ -282,17 +324,17 @@ def reindex_all(
             user_id      = current_user.id,
             db           = db,
             skip_indexed = False,
+            stream       = None,
         )
+        combined = _merge_results(combined, local_result)
     except Exception as e:
-        local_result = {"total": 0, "indexed": 0, "skipped": 0, "updated": 0,
-                        "errors": [f"Local re-indexing failed unexpectedly: {e}"]}
+        combined["errors"].append(f"Local re-indexing failed unexpectedly: {e}")
         print(f"[Indexing] Local error: {e}")
 
-    result = _merge_results(drive_result, local_result)
     print(
-        f"[Indexing] Done — {result['indexed']} indexed, {len(result['errors'])} errors"
+        f"[Indexing] Done — {combined['indexed']} indexed, {len(combined['errors'])} errors"
     )
-    return IndexingResult(**result)
+    return IndexingResult(**combined)
 
 
 # ─────────────────────────────────────────────────────────────
