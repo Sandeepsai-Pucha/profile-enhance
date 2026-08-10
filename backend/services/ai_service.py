@@ -57,11 +57,32 @@ def _parse_json(raw: str, fallback: Any) -> Any:
         return fallback
 
 
-def _call_gemini(prompt: str) -> str:
-    """Single Gemini call with basic error handling."""
+_total_prompt_tokens     = 0
+_total_completion_tokens = 0
+_total_calls             = 0
+
+def _call_gemini(prompt: str, label: str = "") -> str:
+    """Single Gemini call, logs token usage, with basic error handling."""
+    global _total_prompt_tokens, _total_completion_tokens, _total_calls
+
     if _model is None:
         raise RuntimeError("Gemini model is not initialized. Set AI_PROVIDER=gemini in .env")
     response = _model.generate_content(prompt)
+
+    usage = getattr(response, "usage_metadata", None)
+    if usage:
+        _total_prompt_tokens     += usage.prompt_token_count
+        _total_completion_tokens += usage.candidates_token_count
+        _total_calls             += 1
+        print(
+            f"[Gemini] {label or 'call'} | "
+            f"prompt={usage.prompt_token_count} | "
+            f"completion={usage.candidates_token_count} | "
+            f"total={usage.total_token_count} | "
+            f"session_total={_total_prompt_tokens + _total_completion_tokens} tokens "
+            f"({_total_calls} calls)"
+        )
+
     return response.text
 
 
@@ -127,12 +148,13 @@ Job Description:
 # ═══════════════════════════════════════════════════════════════
 # 2. PARSE RESUME  →  structured candidate profile
 # ═══════════════════════════════════════════════════════════════
-def parse_resume(resume_text: str) -> Dict[str, Any]:
+def parse_resume(resume_text: str, resume_label: str = "") -> Dict[str, Any]:
     """
     Extract structured data from raw resume/CV text.
     Returns a dict with candidate profile data.
     """
     truncated = resume_text[:MAX_RESUME_CHARS]
+    call_label = f"parse_resume [{resume_label}]" if resume_label else "parse_resume"
 
     prompt = f"""You are an expert resume parser. Extract structured information from this resume
 and return ONLY a valid JSON object with EXACTLY this structure (no markdown):
@@ -169,7 +191,7 @@ Resume:
 {truncated}
 """
     try:
-        raw  = _call_gemini(prompt)
+        raw  = _call_gemini(prompt, label=call_label)
         data = _parse_json(raw, {})
         data.setdefault("name", "Unknown")
         data.setdefault("skills", [])
@@ -178,7 +200,7 @@ Resume:
         data.setdefault("experience_years", 0)
         return data
     except Exception as e:
-        print(f"[AI] parse_resume failed: {e}")
+        print(f"[AI] {call_label} failed: {e}")
         return {
             "name": "Unknown", "email": None, "phone": None,
             "current_role": None, "experience_years": 0,

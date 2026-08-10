@@ -49,13 +49,34 @@ def _parse_json(raw: str, fallback: Any) -> Any:
         return fallback
 
 
-def _call_claude(prompt: str) -> str:
-    """Send a prompt to Claude and return the text response."""
+_total_input_tokens  = 0
+_total_output_tokens = 0
+_total_calls         = 0
+
+def _call_claude(prompt: str, max_tokens: int = 2048, label: str = "") -> str:
+    """Send a prompt to Claude, log token usage, and return the text response."""
+    global _total_input_tokens, _total_output_tokens, _total_calls
+
     response = _client.messages.create(
         model=CLAUDE_MODEL,
-        max_tokens=2048,
+        max_tokens=max_tokens,
         messages=[{"role": "user", "content": prompt}],
     )
+
+    usage = response.usage
+    if usage:
+        _total_input_tokens  += usage.input_tokens
+        _total_output_tokens += usage.output_tokens
+        _total_calls         += 1
+        print(
+            f"[Claude] {label or 'call'} | "
+            f"input={usage.input_tokens} | "
+            f"output={usage.output_tokens} | "
+            f"total={usage.input_tokens + usage.output_tokens} | "
+            f"session_total={_total_input_tokens + _total_output_tokens} tokens "
+            f"({_total_calls} calls)"
+        )
+
     return response.content[0].text
 
 
@@ -116,8 +137,9 @@ Job Description:
 # ═══════════════════════════════════════════════════════════════
 # 2. PARSE RESUME
 # ═══════════════════════════════════════════════════════════════
-def parse_resume(resume_text: str) -> Dict[str, Any]:
+def parse_resume(resume_text: str, resume_label: str = "") -> Dict[str, Any]:
     truncated = resume_text[:MAX_RESUME_CHARS]
+    call_label = f"parse_resume [{resume_label}]" if resume_label else "parse_resume"
 
     prompt = f"""You are an expert resume parser. Extract structured information from this resume
 and return ONLY a valid JSON object with EXACTLY this structure (no markdown):
@@ -154,7 +176,7 @@ Resume:
 {truncated}
 """
     try:
-        raw  = _call_claude(prompt)
+        raw  = _call_claude(prompt, label=call_label)
         data = _parse_json(raw, {})
         data.setdefault("name", "Unknown")
         data.setdefault("skills", [])
@@ -163,7 +185,7 @@ Resume:
         data.setdefault("experience_years", 0)
         return data
     except Exception as e:
-        print(f"[Claude] parse_resume failed: {e}")
+        print(f"[Claude] {call_label} failed: {e}")
         return {
             "name": "Unknown", "email": None, "phone": None,
             "current_role": None, "experience_years": 0,

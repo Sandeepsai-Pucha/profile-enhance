@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
-import { Home, LayoutDashboard, FileText, Cpu, LogOut, ChevronRight, Database } from 'lucide-react'
+import { Home, LayoutDashboard, FileText, Cpu, LogOut, ChevronRight, Database, FileEdit } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { useIdleTimeout } from '../hooks/useIdleTimeout'
 import IdleWarningModal from './IdleWarningModal'
@@ -18,6 +18,7 @@ const NAV_ITEMS = [
   { to: '/app/jobs',      icon: FileText,        label: 'Job Descriptions' },
   { to: '/app/indexing',  icon: Database,        label: 'Index Resumes'    },
   { to: '/app/pipeline',  icon: Cpu,             label: 'Run Pipeline'     },
+  { to: '/app/format-resume', icon: FileEdit,    label: 'Format Resume'    },
 ]
 
 export default function Layout() {

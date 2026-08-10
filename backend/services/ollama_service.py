@@ -53,8 +53,14 @@ def _parse_json(raw: str, fallback: Any) -> Any:
         return fallback
 
 
-def _call_ollama(prompt: str) -> str:
-    """Send a prompt to the local Ollama server and return the text response."""
+_total_prompt_tokens     = 0
+_total_completion_tokens = 0
+_total_calls             = 0
+
+def _call_ollama(prompt: str, label: str = "") -> str:
+    """Send a prompt to the local Ollama server, log token usage, and return the text response."""
+    global _total_prompt_tokens, _total_completion_tokens, _total_calls
+
     response = httpx.post(
         f"{OLLAMA_URL}/api/generate",
         json={
@@ -69,7 +75,24 @@ def _call_ollama(prompt: str) -> str:
         timeout=600.0,
     )
     response.raise_for_status()
-    return response.json()["response"]
+    body = response.json()
+
+    prompt_tokens     = body.get("prompt_eval_count")
+    completion_tokens = body.get("eval_count")
+    if prompt_tokens is not None and completion_tokens is not None:
+        _total_prompt_tokens     += prompt_tokens
+        _total_completion_tokens += completion_tokens
+        _total_calls             += 1
+        print(
+            f"[Ollama] {label or 'call'} | "
+            f"prompt={prompt_tokens} | "
+            f"completion={completion_tokens} | "
+            f"total={prompt_tokens + completion_tokens} | "
+            f"session_total={_total_prompt_tokens + _total_completion_tokens} tokens "
+            f"({_total_calls} calls)"
+        )
+
+    return body["response"]
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -129,8 +152,9 @@ Job Description:
 # ═══════════════════════════════════════════════════════════════
 # 2. PARSE RESUME
 # ═══════════════════════════════════════════════════════════════
-def parse_resume(resume_text: str) -> Dict[str, Any]:
+def parse_resume(resume_text: str, resume_label: str = "") -> Dict[str, Any]:
     truncated = resume_text[:MAX_RESUME_CHARS]
+    call_label = f"parse_resume [{resume_label}]" if resume_label else "parse_resume"
 
     prompt = f"""You are an expert resume parser. Extract structured information from this resume
 and return ONLY a valid JSON object with EXACTLY this structure (no markdown):
@@ -167,7 +191,7 @@ Resume:
 {truncated}
 """
     try:
-        raw  = _call_ollama(prompt)
+        raw  = _call_ollama(prompt, label=call_label)
         data = _parse_json(raw, {})
         data.setdefault("name", "Unknown")
         data.setdefault("skills", [])
@@ -176,7 +200,7 @@ Resume:
         data.setdefault("experience_years", 0)
         return data
     except Exception as e:
-        print(f"[Ollama] parse_resume failed: {e}")
+        print(f"[Ollama] {call_label} failed: {e}")
         return {
             "name": "Unknown", "email": None, "phone": None,
             "current_role": None, "experience_years": 0,

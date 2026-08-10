@@ -90,6 +90,20 @@ def list_resume_files(
 
 
 # ─────────────────────────────────────────────────────────────
+# GET a single file's mimeType (used when reprocessing a failed parse,
+# where we only stored the Drive file id, not its mimeType)
+# ─────────────────────────────────────────────────────────────
+def get_file_mime_type(access_token: str, file_id: str) -> Optional[str]:
+    try:
+        service = _get_drive_service(access_token)
+        meta = service.files().get(fileId=file_id, fields="mimeType").execute()
+        return meta.get("mimeType")
+    except Exception as e:
+        print(f"[Drive] Could not fetch mimeType for {file_id}: {e}")
+        return None
+
+
+# ─────────────────────────────────────────────────────────────
 # DOWNLOAD + PARSE a single resume file
 # ─────────────────────────────────────────────────────────────
 def download_and_parse_resume(

@@ -42,12 +42,14 @@ from schemas import (
 from routers.auth import get_current_user
 from services.bm25_service import BM25, build_jd_query
 from services.matching_service import compute_match
+from services.resume_chunking import parse_resume_chunked
 
 import os as _os
 _AI_PROVIDER = _os.getenv("AI_PROVIDER", "claude").lower()
 if _AI_PROVIDER == "claude":
     from services.claude_service import (
         parse_resume,
+        MAX_RESUME_CHARS,
         match_resume_to_jd,
         generate_improvement_suggestions,
         generate_interview_questions,
@@ -57,6 +59,7 @@ if _AI_PROVIDER == "claude":
 elif _AI_PROVIDER == "ollama":
     from services.ollama_service import (
         parse_resume,
+        MAX_RESUME_CHARS,
         match_resume_to_jd,
         generate_improvement_suggestions,
         generate_interview_questions,
@@ -66,6 +69,7 @@ elif _AI_PROVIDER == "ollama":
 elif _AI_PROVIDER == "groq":
     from services.groq_service import (
         parse_resume,
+        MAX_RESUME_CHARS,
         match_resume_to_jd,
         generate_improvement_suggestions,
         generate_interview_questions,
@@ -75,6 +79,7 @@ elif _AI_PROVIDER == "groq":
 else:
     from services.ai_service import (
         parse_resume,
+        MAX_RESUME_CHARS,
         match_resume_to_jd,
         generate_improvement_suggestions,
         generate_interview_questions,
@@ -207,9 +212,10 @@ def _page_index_to_parsed_dict(page_index: dict) -> dict:
 # HELPER: match one stored profile against JD (no LLM — pure DB data)
 # ─────────────────────────────────────────────────────────────
 def _match_profile(
-    profile:     CandidateProfile,
-    jd_data:     dict,
-    jd_raw_text: str,  # kept for signature compatibility; not used
+    profile:        CandidateProfile,
+    jd_data:        dict,
+    jd_raw_text:    str,  # kept for signature compatibility; not used
+    bm25_relevance: float = 0.0,  # 0-1, this candidate's BM25 score relative to the pool
 ) -> Tuple[Optional[CandidateMatchResult], Optional[str]]:
     """
     Programmatic matching from stored page_index — zero LLM calls.
@@ -223,8 +229,26 @@ def _match_profile(
         candidate_exp    = float(parsed_dict.get("experience_years") or 0)
         candidate_edu    = parsed_dict.get("education") or ""
 
+        # Concatenate job titles/technologies/descriptions/responsibilities so
+        # a skill demonstrated on the job (but not listed in the flat skills
+        # array) still gets credit.
+        timeline = (page_index.get("experience") or {}).get("timeline") or []
+        work_history_text = " ".join(
+            " ".join(filter(None, [
+                item.get("title") or "",
+                item.get("technologies") or "",
+                item.get("description") or "",
+                " ".join(item.get("key_responsibilities") or []),
+            ]))
+            for item in timeline
+        )
+
         # Programmatic match (no API call)
-        match = compute_match(jd_data, candidate_skills, candidate_exp, candidate_edu)
+        match = compute_match(
+            jd_data, candidate_skills, candidate_exp, candidate_edu,
+            work_history_text = work_history_text,
+            bm25_bonus         = bm25_relevance * 5.0,
+        )
 
         work_history = [
             WorkHistoryItem(
@@ -280,7 +304,8 @@ def _process_one_resume(
 ) -> Tuple[Optional[CandidateMatchResult], Optional[str]]:
     try:
         resume_text = file_meta["text"]
-        parsed      = parse_resume(resume_text)
+        parsed      = parse_resume_chunked(parse_resume, resume_text, resume_label=file_meta.get("name", ""),
+                                            chunk_chars=MAX_RESUME_CHARS)
         match       = match_resume_to_jd(jd_data, parsed, resume_text, jd_raw_text)
 
         work_history = [
@@ -421,21 +446,28 @@ def run_pipeline(
                     f"{len(profiles)} remain"
                 )
 
-        # ── BM25 pre-filter: narrow to top-K before scoring ──
-        # Only kicks in when the pool is larger than BM25_PREFILTER_K
+        # ── BM25: always scored, used both to pre-filter large pools AND
+        # as a relevance signal folded into each candidate's match score
+        # (see compute_match's bm25_bonus) so otherwise-tied candidates
+        # (same skill/experience/education profile) still differentiate.
+        bm25 = BM25()
+        bm25.fit([p.bm25_corpus or "" for p in profiles])
+        jd_query   = build_jd_query(jd_data)
+        raw_scores = bm25.get_scores(jd_query)
+        max_score  = max(raw_scores) if raw_scores else 0.0
+
         if len(profiles) > BM25_PREFILTER_K:
-            bm25 = BM25()
-            bm25.fit([p.bm25_corpus or "" for p in profiles])
-            jd_query = build_jd_query(jd_data)
             top_k_indices = {idx for idx, _ in bm25.get_top_k(jd_query, k=BM25_PREFILTER_K)}
-            profiles_to_score = [p for i, p in enumerate(profiles) if i in top_k_indices]
-            print(f"[Pipeline] BM25 pre-filter: {len(profiles)} → {len(profiles_to_score)} candidates")
+            print(f"[Pipeline] BM25 pre-filter: {len(profiles)} → {len(top_k_indices)} candidates")
         else:
-            profiles_to_score = profiles
+            top_k_indices = set(range(len(profiles)))
 
         # Score shortlisted profiles — pure Python, instant
-        for profile in profiles_to_score:
-            result, err = _match_profile(profile, jd_data, jd_raw_text)
+        for i, profile in enumerate(profiles):
+            if i not in top_k_indices:
+                continue
+            relevance = (raw_scores[i] / max_score) if max_score > 0 else 0.0
+            result, err = _match_profile(profile, jd_data, jd_raw_text, bm25_relevance=relevance)
             if err:
                 errors.append(err)
             elif result:

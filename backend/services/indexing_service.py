@@ -14,25 +14,25 @@ Flow:
 
 import os
 import re
-import time
 from datetime import datetime
 from typing import List, Dict, Any, Optional, Tuple, Set
 
 from sqlalchemy.orm import Session
 
-from models import CandidateProfile
+from models import CandidateProfile, FailedParse
 from services.bm25_service import build_bm25_corpus
+from services.resume_chunking import parse_resume_chunked
 
 # Dynamic AI provider import (mirrors pipeline.py)
 _AI_PROVIDER = os.getenv("AI_PROVIDER", "claude").lower()
 if _AI_PROVIDER == "claude":
-    from services.claude_service import parse_resume
+    from services.claude_service import parse_resume, MAX_RESUME_CHARS
 elif _AI_PROVIDER == "ollama":
-    from services.ollama_service import parse_resume
+    from services.ollama_service import parse_resume, MAX_RESUME_CHARS
 elif _AI_PROVIDER == "groq":
-    from services.groq_service import parse_resume
+    from services.groq_service import parse_resume, MAX_RESUME_CHARS
 else:
-    from services.ai_service import parse_resume
+    from services.ai_service import parse_resume, MAX_RESUME_CHARS
 
 
 # ─────────────────────────────────────────────────────────────
@@ -128,7 +128,8 @@ def _parse_only(
     No DB access — safe to call from multiple threads simultaneously.
     """
     try:
-        parsed      = parse_resume(resume_text)
+        parsed      = parse_resume_chunked(parse_resume, resume_text, resume_label=file_name,
+                                            chunk_chars=MAX_RESUME_CHARS)
         page_index  = build_page_index(parsed, resume_text)
         bm25_corpus = build_bm25_corpus(parsed)
         return source_file_id, file_name, {
@@ -138,6 +139,70 @@ def _parse_only(
         }, None
     except Exception as e:
         return source_file_id, file_name, None, str(e)
+
+
+# ─────────────────────────────────────────────────────────────
+# Failed-parse tracking — never drop a failure silently
+# ─────────────────────────────────────────────────────────────
+def _record_failed_parse(
+    db:             Session,
+    source_file_id: str,
+    file_name:      str,
+    user_id:        int,
+    error:          str,
+    attempts:       int = 1,
+    stream:         Optional[str] = None,
+) -> None:
+    """
+    Persist a resume that failed to parse after all retries were exhausted,
+    so it's visible and can be reprocessed later instead of just vanishing
+    from the results. Upserts — repeated failures on the same file update
+    the same row (incrementing attempts) rather than piling up duplicates.
+    """
+    timestamp = datetime.utcnow()
+    print(
+        f"[Indexing] PARSE FAILED — file='{file_name}' source_id='{source_file_id}' "
+        f"user={user_id} attempts={attempts} at={timestamp.isoformat()} error={error}"
+    )
+    try:
+        existing = db.query(FailedParse).filter(
+            FailedParse.source_file_id == source_file_id,
+            FailedParse.user_id        == user_id,
+        ).first()
+        if existing:
+            existing.error     = error
+            existing.attempts  = (existing.attempts or 0) + attempts
+            existing.file_name = file_name
+            existing.stream    = stream
+            existing.failed_at = timestamp
+        else:
+            db.add(FailedParse(
+                source_file_id = source_file_id,
+                file_name      = file_name,
+                user_id        = user_id,
+                stream         = stream,
+                error          = error,
+                attempts       = attempts,
+                failed_at      = timestamp,
+            ))
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        # Even the failure-tracking write failed — this must still not be
+        # swallowed silently, so it goes to the server log at minimum.
+        print(f"[Indexing] Could not persist failed-parse record for {file_name}: {e}")
+
+
+def _clear_failed_parse(db: Session, source_file_id: str, user_id: int) -> None:
+    """Remove a failed_parses row once that file successfully indexes."""
+    try:
+        db.query(FailedParse).filter(
+            FailedParse.source_file_id == source_file_id,
+            FailedParse.user_id        == user_id,
+        ).delete()
+        db.commit()
+    except Exception:
+        db.rollback()
 
 
 # ─────────────────────────────────────────────────────────────
@@ -151,7 +216,11 @@ def _upsert(
     db:             Session,
     stream:         Optional[str] = None,
 ) -> Tuple[bool, str]:
-    """Write one parsed resume result to the DB (upsert)."""
+    """
+    Write one parsed resume result to the DB (upsert). Only ever called
+    after parse_resume() returned successfully — a real, validated response,
+    never a partial/failed one (see _parse_only below).
+    """
     try:
         parsed      = data["parsed"]
         page_index  = data["page_index"]
@@ -173,6 +242,7 @@ def _upsert(
             existing.stream           = stream
             existing.indexed_at       = datetime.utcnow()
             db.commit()
+            _clear_failed_parse(db, source_file_id, user_id)
             return True, f"Updated: {file_name}"
         else:
             db.add(CandidateProfile(
@@ -189,6 +259,7 @@ def _upsert(
                 indexed_at       = datetime.utcnow(),
             ))
             db.commit()
+            _clear_failed_parse(db, source_file_id, user_id)
             return True, f"Indexed: {file_name}"
     except Exception as e:
         db.rollback()
@@ -216,37 +287,27 @@ def index_one_resume(
 # ─────────────────────────────────────────────────────────────
 # Sequential parse helper — one resume at a time, no partial parses
 # ─────────────────────────────────────────────────────────────
-_PARSE_RETRY_DELAY = float(os.getenv("INDEX_RETRY_DELAY", "5"))  # seconds between retries on rate limit
-
-
 def _parse_sequential(
     items: List[Tuple[str, str, str]],   # [(source_file_id, file_name, text), ...]
-    max_retries: int = 3,
 ) -> List[Any]:
     """
-    Parse resumes one by one. Each resume is fully parsed before moving
-    to the next — guarantees no partial parses and avoids Groq rate limits.
-    Retries with exponential backoff on 429 rate-limit errors.
+    Parse resumes one by one. Each resume is fully parsed before moving to
+    the next — guarantees no partial parses.
+
+    Retry-on-429 used to live in a loop here, but it never actually worked:
+    parse_resume() swallowed every error internally and returned a fake
+    empty profile instead of raising, so this loop's `except` branch never
+    saw a real error to retry. That retry logic now lives at the source —
+    in groq_service.py's _call_groq(), via call_groq_with_retry() — which
+    can see and act on the actual 429 response (Retry-After header, etc.).
+    This function just calls _parse_only() once per resume and lets a
+    genuine failure (rate-limit retries exhausted, unparseable response)
+    propagate through as `err` for the caller to record.
     """
     results = []
     for sid, fname, text in items:
         print(f"[Indexing] Parsing: {fname}")
-        result = None
-        for attempt in range(max_retries):
-            sid_out, fname_out, data, err = _parse_only(sid, fname, text)
-            if err is None:
-                result = (sid_out, fname_out, data, None)
-                break
-            if "rate_limit" in str(err).lower() or "429" in str(err) or "rate limit" in str(err).lower():
-                wait = _PARSE_RETRY_DELAY * (2 ** attempt)
-                print(f"[Indexing] Rate limit hit for {fname}, retrying in {wait:.0f}s (attempt {attempt+1}/{max_retries})")
-                time.sleep(wait)
-            else:
-                result = (sid_out, fname_out, None, err)
-                break
-        if result is None:
-            result = (sid, fname, None, "Rate limit retries exhausted")
-        results.append(result)
+        results.append(_parse_only(sid, fname, text))
     return results
 # ─────────────────────────────────────────────────────────────
 # Index all resumes from a local file
@@ -272,7 +333,7 @@ def index_local_resumes(
     for sid, fname, data, err in parse_results:
         if err:
             errors.append(f"Failed to parse {fname}: {err}")
-            print(f"[Indexing] PARSE ERROR: {fname}: {err}")
+            _record_failed_parse(db, sid, fname, user_id, str(err), stream=stream)
             continue
         ok, msg = _upsert(sid, fname, data, user_id, db, stream=stream)
         if ok:
@@ -343,6 +404,7 @@ def index_drive_folder(
     for sid, fname, data, err in parse_results:
         if err:
             errors.append(f"Failed to parse {fname}: {err}")
+            _record_failed_parse(db, sid, fname, user_id, str(err), stream=stream)
             continue
         ok, msg = _upsert(sid, fname, data, user_id, db, stream=stream)
         if ok:
@@ -410,7 +472,7 @@ def index_resume_folder(
     for sid, fname, data, err in parse_results:
         if err:
             errors.append(f"Failed to parse {fname}: {err}")
-            print(f"[Indexing] PARSE ERROR: {fname}: {err}")
+            _record_failed_parse(db, sid, fname, user_id, str(err), stream=stream)
             continue
         ok, msg = _upsert(sid, fname, data, user_id, db, stream=stream)
         if ok:
@@ -422,3 +484,85 @@ def index_resume_folder(
             print(f"[Indexing] ERROR: {msg}")
 
     return {"total": len(folder_files), "indexed": indexed, "skipped": skipped, "updated": updated, "errors": errors}
+
+
+# ─────────────────────────────────────────────────────────────
+# REPROCESS previously-failed parses (the "failed parses queue", reprocessed)
+# ─────────────────────────────────────────────────────────────
+def reprocess_failed_parses(
+    user_id:      int,
+    db:           Session,
+    access_token: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Re-attempt every failed_parses row for this user.
+
+    Local-upload failures (stream is None) are re-read straight from disk.
+    Drive-sourced failures (stream is set) need a live Google access_token
+    to re-download — pass one in if available, otherwise those rows are
+    reported as skipped rather than silently ignored.
+    """
+    from services.resume_storage_service import list_resume_files, extract_text_from_file
+
+    failed_rows = db.query(FailedParse).filter(FailedParse.user_id == user_id).all()
+    if not failed_rows:
+        return {"total": 0, "recovered": 0, "still_failed": 0, "errors": []}
+
+    local_files = {f["filename"]: f["file_path"] for f in list_resume_files(user_id)}
+    stream_by_sid = {row.source_file_id: row.stream for row in failed_rows}
+
+    to_parse: List[Tuple[str, str, str]] = []
+    errors: List[str] = []
+
+    for row in failed_rows:
+        if row.stream:
+            if not access_token:
+                errors.append(f"{row.file_name}: skipped (Drive-sourced, no access_token provided to reprocess)")
+                continue
+            from services.google_drive_service import get_file_mime_type, download_and_parse_resume
+            mime_type = get_file_mime_type(access_token, row.source_file_id)
+            if not mime_type:
+                errors.append(f"{row.file_name}: could not look up file on Drive (deleted/moved?)")
+                continue
+            text, err = download_and_parse_resume(access_token, row.source_file_id, mime_type)
+            if err or not text:
+                errors.append(f"{row.file_name}: {err or 'could not re-download from Drive'}")
+                continue
+            to_parse.append((row.source_file_id, row.file_name, text))
+        else:
+            file_path = local_files.get(row.file_name)
+            if not file_path:
+                errors.append(f"{row.file_name}: local file no longer exists on disk")
+                continue
+            text = extract_text_from_file(file_path)
+            if not text:
+                errors.append(f"{row.file_name}: could not extract text")
+                continue
+            to_parse.append((row.source_file_id, row.file_name, text))
+
+    if not to_parse:
+        return {"total": len(failed_rows), "recovered": 0, "still_failed": len(failed_rows), "errors": errors}
+
+    print(f"[Indexing] Reprocessing {len(to_parse)} previously-failed resume(s) for user {user_id}")
+    parse_results = _parse_sequential(to_parse)
+
+    recovered = 0
+    for sid, fname, data, err in parse_results:
+        stream = stream_by_sid.get(sid)
+        if err:
+            errors.append(f"Still failing: {fname}: {err}")
+            _record_failed_parse(db, sid, fname, user_id, str(err), stream=stream)
+            continue
+        ok, msg = _upsert(sid, fname, data, user_id, db, stream=stream)
+        if ok:
+            recovered += 1
+            print(f"[Indexing] Recovered: {msg}")
+        else:
+            errors.append(msg)
+
+    return {
+        "total":        len(failed_rows),
+        "recovered":    recovered,
+        "still_failed": len(failed_rows) - recovered,
+        "errors":       errors,
+    }

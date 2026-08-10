@@ -38,3 +38,10 @@ fpdf2==2.8.7
 
 # ── Env / Config ─────────────────────────────────────────────
 python-dotenv==1.0.1
+
+# ── Corporate-network TLS fix (Windows) ───────────────────────
+# Makes Python trust the Windows OS certificate store instead of its own
+# bundled list — needed behind SSL-inspecting corporate proxies (e.g. Zscaler)
+# where AI provider SDKs (Groq, Anthropic, etc.) otherwise fail with
+# APIConnectionError / "Connection error".
+pip-system-certs; sys_platform == "win32"

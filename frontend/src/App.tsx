@@ -12,8 +12,8 @@ import DashboardPage from './pages/DashboardPage'
 import JobsPage from './pages/JobsPage'
 import PipelinePage from './pages/PipelinePage'
 import ResultsPage from './pages/ResultsPage'
-import InterviewersPage from './pages/InterviewersPage'
 import IndexingPage from './pages/IndexingPage'
+import FormatResumePage from './pages/FormatResumePage'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useAuth()
@@ -52,6 +52,7 @@ export default function App() {
         <Route path="pipeline" element={<PipelinePage />} />
         <Route path="results" element={<ResultsPage />} />
         <Route path="indexing" element={<IndexingPage />} />
+        <Route path="format-resume" element={<FormatResumePage />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

@@ -11,6 +11,8 @@ Endpoints:
   POST   /indexing/reindex             Force re-index all files in the folder
   GET    /indexing/status              Count + list of indexed candidate profiles
   DELETE /indexing/reset               Remove all indexed profiles (keeps files on disk)
+  GET    /indexing/failed              List resumes that exhausted all parse retries
+  POST   /indexing/retry-failed        Reprocess the failed-parses queue
 
 Stream-based Drive folder IDs (set in .env):
   DIGITAL_DRIVE_FOLDER_ID    — folder for Digital stream resumes
@@ -25,13 +27,16 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Body
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import CandidateProfile
+from models import CandidateProfile, FailedParse
 from schemas import (
     IndexingRequest, IndexingResult, IndexingStatusOut, CandidateProfileOut,
     ResumeFileOut, ResumesListOut, VALID_STREAMS,
 )
 from routers.auth import get_current_user
-from services.indexing_service import index_resume_folder, index_local_resumes, index_drive_folder
+from services.indexing_service import (
+    index_resume_folder, index_local_resumes, index_drive_folder,
+    reprocess_failed_parses,
+)
 from services.resume_storage_service import (
     save_uploaded_file,
     list_resume_files,
@@ -384,3 +389,65 @@ def reset_indexing(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to reset indexed profiles: {e}")
+
+
+# ─────────────────────────────────────────────────────────────
+# GET /indexing/failed — resumes that exhausted all parse retries
+# ─────────────────────────────────────────────────────────────
+@router.get("/failed")
+def list_failed_parses(
+    db:           Session = Depends(get_db),
+    current_user          = Depends(get_current_user),
+):
+    """List resumes that failed to parse after all retries — the 'failed parses queue'."""
+    rows = (
+        db.query(FailedParse)
+        .filter(FailedParse.user_id == current_user.id)
+        .order_by(FailedParse.failed_at.desc())
+        .all()
+    )
+    return {
+        "total": len(rows),
+        "failed": [
+            {
+                "source_file_id": r.source_file_id,
+                "file_name":      r.file_name,
+                "stream":         r.stream,
+                "error":          r.error,
+                "attempts":       r.attempts,
+                "failed_at":      r.failed_at.isoformat() if r.failed_at else None,
+            }
+            for r in rows
+        ],
+    }
+
+
+# ─────────────────────────────────────────────────────────────
+# POST /indexing/retry-failed — reprocess the failed-parses queue
+# ─────────────────────────────────────────────────────────────
+@router.post("/retry-failed", response_model=IndexingResult)
+def retry_failed_parses(
+    db:           Session = Depends(get_db),
+    current_user          = Depends(get_current_user),
+):
+    """
+    Re-attempt every resume in the failed-parses queue. Local-upload
+    failures are re-read from disk; Drive-sourced failures are re-downloaded
+    using the current user's Google access token.
+    """
+    result = reprocess_failed_parses(
+        user_id      = current_user.id,
+        db           = db,
+        access_token = current_user.access_token,
+    )
+    print(
+        f"[Indexing] Retry-failed for user {current_user.id}: "
+        f"{result['recovered']} recovered, {result['still_failed']} still failed"
+    )
+    return IndexingResult(
+        total   = result["total"],
+        indexed = result["recovered"],
+        skipped = 0,
+        updated = 0,
+        errors  = result["errors"],
+    )

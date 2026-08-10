@@ -8,10 +8,16 @@ We compute match_score, matched_skills, missing_skills, and extra_skills
 directly from that data — no API calls needed.
 
 Scoring weights
-  Skill coverage  55%  (required skills matched / total required)
+  Skill coverage  55%  (required skills matched / total required —
+                        credited from the flat skills list OR demonstrated
+                        in work-history text)
   Experience fit  25%
   Nice-to-have    15%
   Education fit    5%
+  BM25 relevance  +0-5 point bonus, scaled by this candidate's BM25 score
+                  relative to the rest of the pool for this JD — reduces
+                  identical-score ties among candidates with the same
+                  skill/experience/education profile.
 """
 
 import re
@@ -256,6 +262,20 @@ def _skill_to_canonical_set(phrase: str) -> Set[str]:
     return result if result else {phrase.lower().strip()}
 
 
+def _skill_mentioned_in_text(jd_phrase: str, text_lower: str) -> bool:
+    """
+    Check if any canonical form of a JD skill phrase appears in free text
+    (e.g. work-history responsibilities/descriptions), for skills a candidate
+    demonstrated on the job but didn't list in their flat skills array.
+    """
+    if not text_lower:
+        return False
+    for canon in _skill_to_canonical_set(jd_phrase):
+        if len(canon) >= 3 and canon in text_lower:
+            return True
+    return False
+
+
 def _skills_match(jd_phrase: str, cand_set: Set[str]) -> bool:
     """
     Return True if ANY canonical form of the JD phrase matches ANY
@@ -281,14 +301,25 @@ def _skills_match(jd_phrase: str, cand_set: Set[str]) -> bool:
 
 
 def compute_match(
-    jd_data:           Dict[str, Any],
-    candidate_skills:  List[str],
-    candidate_exp:     float,
-    candidate_edu:     str = "",
+    jd_data:            Dict[str, Any],
+    candidate_skills:   List[str],
+    candidate_exp:      float,
+    candidate_edu:      str = "",
+    work_history_text:  str = "",
+    bm25_bonus:         float = 0.0,
 ) -> Dict[str, Any]:
     """
     Compute match_score, matched_skills, missing_skills, extra_skills,
     experience_match purely from stored data — no LLM call.
+
+    work_history_text: concatenated job titles/technologies/descriptions/
+    responsibilities. A required skill demonstrated here but not listed in
+    the flat skills array still counts as matched.
+
+    bm25_bonus: small additive score (already scaled by the caller, e.g.
+    0-5 points) reflecting this candidate's BM25 relevance to the JD
+    relative to the rest of the pool — differentiates candidates who'd
+    otherwise land on an identical skill/experience/education score.
     """
     required     = jd_data.get("required_skills", [])
     nice_to_have = jd_data.get("nice_to_have_skills", [])
@@ -301,12 +332,16 @@ def compute_match(
     for s in candidate_skills:
         cand_set.update(_skill_to_canonical_set(s))
 
+    work_history_lower = work_history_text.lower()
+
     # ── Skill matching ────────────────────────────────────────
     matched: List[str] = []
     missing: List[str] = []
 
     for skill in required:
         if _skills_match(skill, cand_set):
+            matched.append(skill)
+        elif _skill_mentioned_in_text(skill, work_history_lower):
             matched.append(skill)
         else:
             missing.append(skill)
@@ -364,7 +399,7 @@ def compute_match(
             edu_score = 2.5
     # else: edu required but candidate has none → 0
 
-    total = round(min(100.0, max(0.0, skill_score + exp_score + nice_score + edu_score)), 1)
+    total = round(min(100.0, max(0.0, skill_score + exp_score + nice_score + edu_score + bm25_bonus)), 1)
 
     # ── Experience match label ────────────────────────────────
     if candidate_exp < exp_min:

@@ -23,6 +23,7 @@ from routers import pipeline
 from routers import email
 from routers import indexing
 from routers import interviews
+from routers import resume_format
 from routers.auth import get_current_user
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
@@ -52,6 +53,7 @@ app.include_router(pipeline.router)    # /pipeline/*
 app.include_router(email.router)       # /email/*
 app.include_router(indexing.router)    # /indexing/*
 app.include_router(interviews.router)  # /interviews/*
+app.include_router(resume_format.router)  # /resume-format/*
 
 
 # ─────────────────────────────────────────────────────────────

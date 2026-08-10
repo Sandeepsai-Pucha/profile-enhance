@@ -20,12 +20,30 @@ from typing import List, Dict, Any
 
 from groq import Groq
 
+from services.groq_retry import call_groq_with_retry, GroqRateLimiter, GroqRetryExhausted
+
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_MODEL   = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
 
 _client = Groq(api_key=GROQ_API_KEY)
 
 MAX_RESUME_CHARS = 20000
+
+# Groq's account-level rate limit (tokens/minute) — override via env if your
+# plan has a different limit. Proactively throttled in _call_groq() below,
+# on top of the reactive retry-on-429 handling.
+GROQ_TPM_LIMIT = int(os.getenv("GROQ_TPM_LIMIT", "6000"))
+_rate_limiter  = GroqRateLimiter(tpm_limit=GROQ_TPM_LIMIT)
+
+
+def _estimate_tokens(text: str) -> int:
+    """
+    Rough pre-call estimate (~4 chars/token for English text) used only to
+    decide whether to throttle BEFORE sending a request. Corrected with the
+    real usage.total_tokens Groq returns after every call — see
+    _rate_limiter.record_usage() below.
+    """
+    return max(1, len(text) // 4)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -56,18 +74,37 @@ _total_completion_tokens = 0
 _total_calls             = 0
 
 def _call_groq(prompt: str, max_tokens: int = 1024, label: str = "") -> str:
-    """Send a prompt to Groq, log token usage, and return the text response."""
+    """
+    Send a prompt to Groq, log token usage, and return the text response.
+
+    Two layers of rate-limit protection:
+      1. Proactive: wait_for_budget() sleeps beforehand if this call's
+         estimated size would exceed GROQ_TPM_LIMIT tokens/minute.
+      2. Reactive: call_groq_with_retry() retries on an actual 429 (honoring
+         Retry-After) or transient 5xx/connection error, with exponential
+         backoff + jitter, up to 5 attempts. Raises GroqRetryExhausted if
+         every attempt fails — this is NOT caught here, it propagates to the
+         caller (see parse_resume below, and indexing_service.py's handling
+         of it as a real failure rather than a silent empty result).
+    """
     global _total_prompt_tokens, _total_completion_tokens, _total_calls
 
-    completion = _client.chat.completions.create(
-        model=GROQ_MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.1,
-        max_tokens=max_tokens,
-    )
+    estimated_tokens = _estimate_tokens(prompt) + max_tokens
+    _rate_limiter.wait_for_budget(estimated_tokens, label=label)
+
+    def _do_call():
+        return _client.chat.completions.create(
+            model=GROQ_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.1,
+            max_tokens=max_tokens,
+        )
+
+    completion = call_groq_with_retry(_do_call, label=label)
 
     usage = completion.usage
     if usage:
+        _rate_limiter.record_usage(usage.total_tokens)
         _total_prompt_tokens     += usage.prompt_tokens
         _total_completion_tokens += usage.completion_tokens
         _total_calls             += 1
@@ -140,8 +177,9 @@ Job Description:
 # ═══════════════════════════════════════════════════════════════
 # 2. PARSE RESUME
 # ═══════════════════════════════════════════════════════════════
-def parse_resume(resume_text: str) -> Dict[str, Any]:
+def parse_resume(resume_text: str, resume_label: str = "") -> Dict[str, Any]:
     truncated = resume_text[:MAX_RESUME_CHARS]
+    call_label = f"parse_resume [{resume_label}]" if resume_label else "parse_resume"
 
     prompt = f"""You are an expert resume parser. Extract structured information from this resume
 and return ONLY a valid JSON object with EXACTLY this structure (no markdown):
@@ -179,25 +217,23 @@ Rules:
 Resume:
 {truncated}
 """
-    try:
-        raw  = _call_groq(prompt, max_tokens=4096, label="parse_resume")
-        data = _parse_json(raw, {})
-        data.setdefault("name", "Unknown")
-        data.setdefault("skills", [])
-        data.setdefault("certifications", [])
-        data.setdefault("work_history", [])
-        data.setdefault("experience_years", 0)
-        data.setdefault("summary_points", [])
-        return data
-    except Exception as e:
-        print(f"[Groq] parse_resume failed: {e}")
-        return {
-            "name": "Unknown", "email": None, "phone": None,
-            "current_role": None, "experience_years": 0,
-            "skills": [], "education": None,
-            "certifications": [], "work_history": [], "summary": None,
-            "summary_points": [],
-        }
+    # No try/except-and-fall-back-to-empty-profile here on purpose: a resume
+    # that fails to parse (rate limit exhausted, unparseable response, etc.)
+    # must surface as a real failure so the caller (indexing_service.py)
+    # logs it and records it in the failed_parses table — NOT get silently
+    # written to the DB as a blank "Unknown" profile with no skills.
+    raw  = _call_groq(prompt, max_tokens=4096, label=call_label)
+    data = _parse_json(raw, None)
+
+    if not isinstance(data, dict) or not data.get("name"):
+        raise ValueError(f"{call_label}: Groq returned no usable resume data (empty/unparseable JSON response).")
+
+    data.setdefault("skills", [])
+    data.setdefault("certifications", [])
+    data.setdefault("work_history", [])
+    data.setdefault("experience_years", 0)
+    data.setdefault("summary_points", [])
+    return data
 
 
 # ═══════════════════════════════════════════════════════════════

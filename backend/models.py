@@ -119,3 +119,28 @@ class SkillCategory(Base):
     category = Column(String(128), nullable=False)
     skills   = Column(JSON, default=list)
     roles    = Column(JSON, default=list)
+
+
+# ─────────────────────────────────────────────────────────────
+# 5. FAILED PARSE  (resumes that exhausted all retries — not dropped)
+# ─────────────────────────────────────────────────────────────
+class FailedParse(Base):
+    """
+    A resume that failed to parse after all retries were exhausted (e.g.
+    Groq rate-limit retries, or an unparseable AI response). Kept here
+    instead of being silently dropped so it's visible and can be
+    reprocessed later (see indexing_service.reprocess_failed_parses()).
+
+    Cleared automatically the next time this source_file_id parses
+    successfully (see indexing_service._upsert()).
+    """
+    __tablename__ = "failed_parses"
+
+    id             = Column(Integer, primary_key=True, index=True)
+    source_file_id = Column(String(256), nullable=False, index=True)
+    file_name      = Column(String(512), nullable=False)
+    user_id        = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    stream         = Column(String(32), nullable=True)
+    error          = Column(Text, nullable=False)
+    attempts       = Column(Integer, default=1)
+    failed_at      = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

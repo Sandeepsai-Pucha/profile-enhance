@@ -195,6 +195,33 @@ export const generateUpdatedResume = (
     });
 
 // ══════════════════════════════════════════════════════════════
+//  RESUME FORMATTING
+// ══════════════════════════════════════════════════════════════
+
+export const convertResumeToAbsyzFormat = (file: File): Promise<Blob> => {
+  const form = new FormData();
+  form.append("file", file);
+  return api
+    .post("/resume-format/convert", form, {
+      headers: { "Content-Type": "multipart/form-data" },
+      responseType: "blob",
+    })
+    .then((r) => r.data)
+    .catch(async (err) => {
+      if (err.response?.data instanceof Blob) {
+        const text = await err.response.data.text();
+        try {
+          const json = JSON.parse(text);
+          throw new Error(json.detail || text);
+        } catch {
+          throw new Error(text || `HTTP ${err.response.status}`);
+        }
+      }
+      throw err;
+    });
+};
+
+// ══════════════════════════════════════════════════════════════
 //  INTERVIEW SCHEDULING
 // ══════════════════════════════════════════════════════════════
 
