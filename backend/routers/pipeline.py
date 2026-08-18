@@ -248,6 +248,7 @@ def _match_profile(
             jd_data, candidate_skills, candidate_exp, candidate_edu,
             work_history_text = work_history_text,
             bm25_bonus         = bm25_relevance * 5.0,
+            weights            = jd_data.get("weights"),
         )
 
         work_history = [
@@ -399,6 +400,15 @@ def run_pipeline(
         "experience_max":     jd_obj.experience_max,
         "education_required": jd_obj.education_required,
         "responsibilities":   jd_obj.responsibilities or [],
+        # Per-JD scoring weights (see services/matching_service.py) — fall
+        # back to that module's defaults for JDs created before weights
+        # became configurable (column is NULL).
+        "weights": {
+            "skills":       jd_obj.weight_skills       if jd_obj.weight_skills       is not None else 55.0,
+            "experience":   jd_obj.weight_experience   if jd_obj.weight_experience   is not None else 25.0,
+            "nice_to_have": jd_obj.weight_nice_to_have if jd_obj.weight_nice_to_have is not None else 15.0,
+            "education":    jd_obj.weight_education    if jd_obj.weight_education    is not None else 5.0,
+        },
     }
 
     if not jd_data["required_skills"]:

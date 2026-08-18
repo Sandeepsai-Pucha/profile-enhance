@@ -29,6 +29,32 @@ export interface JobDescription {
   jd_summary: string | null;
   uploaded_by: number | null;
   created_at: string;
+  // Configurable scoring weights (sum to 100) — see matching_service.py
+  weight_skills: number;
+  weight_experience: number;
+  weight_nice_to_have: number;
+  weight_education: number;
+}
+
+export interface JDWeights {
+  weight_skills: number;
+  weight_experience: number;
+  weight_nice_to_have: number;
+  weight_education: number;
+}
+
+// ── JD near-duplicate detection ─────────────────────────────────
+export interface JDDuplicate {
+  id: number;
+  title: string;
+  company: string | null;
+  score: number; // 0-1
+  created_at: string | null;
+}
+
+export interface JDDuplicateDetail {
+  message: string;
+  duplicates: JDDuplicate[];
 }
 
 // ── Pipeline (all ephemeral) ──────────────────────────────────
@@ -142,6 +168,21 @@ export interface ResumesListOut {
   indexed_count: number;
   pending_count: number;
   files: ResumeFileOut[];
+}
+
+// ── Failed parses (indexing retry queue) ────────────────────────
+export interface FailedParseOut {
+  source_file_id: string;
+  file_name: string;
+  stream: Stream | null;
+  error: string;
+  attempts: number;
+  failed_at: string | null;
+}
+
+export interface FailedParsesListOut {
+  total: number;
+  failed: FailedParseOut[];
 }
 
 // ── Email Report ──────────────────────────────────────────────

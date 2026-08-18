@@ -13,6 +13,7 @@ to disk or the DB, consistent with the rest of the app.
 
 import io
 import os
+import re
 
 import PyPDF2
 import docx as _docx
@@ -26,13 +27,18 @@ from services.resume_chunking import parse_resume_chunked
 
 _AI_PROVIDER = os.getenv("AI_PROVIDER", "claude").lower()
 if _AI_PROVIDER == "claude":
-    from services.claude_service import parse_resume, MAX_RESUME_CHARS
+    from services.claude_service import parse_resume, MAX_RESUME_CHARS, enhance_profile_summary
 elif _AI_PROVIDER == "ollama":
-    from services.ollama_service import parse_resume, MAX_RESUME_CHARS
+    from services.ollama_service import parse_resume, MAX_RESUME_CHARS, enhance_profile_summary
 elif _AI_PROVIDER == "groq":
-    from services.groq_service import parse_resume, MAX_RESUME_CHARS
+    from services.groq_service import parse_resume, MAX_RESUME_CHARS, enhance_profile_summary
 else:
-    from services.ai_service import parse_resume, MAX_RESUME_CHARS
+    from services.ai_service import parse_resume, MAX_RESUME_CHARS, enhance_profile_summary
+
+# Profile Summary sections this thin get topped up with AI-generated points
+# based on Work Experience / Key Projects — see enhance_profile_summary().
+MIN_SUMMARY_POINTS_BEFORE_ENHANCE = 3
+NEW_SUMMARY_POINTS_TO_ADD         = 7
 
 router = APIRouter(prefix="/resume-format", tags=["Resume Formatting"])
 
@@ -106,6 +112,19 @@ async def convert_resume_to_absyz_format(
                 "model, or a rate limit."
             ),
         )
+
+    # Profile Summary — prefer bullet points the parser found, fall back to
+    # splitting the paragraph summary into sentences (mirrors resume_generator.py).
+    summary_points = parsed.get("summary_points") or []
+    if not summary_points and parsed.get("summary"):
+        pts = re.split(r"\.\s+", parsed["summary"].strip())
+        summary_points = [p.strip().rstrip(".") for p in pts if len(p.strip()) > 10]
+
+    if len(summary_points) < MIN_SUMMARY_POINTS_BEFORE_ENHANCE:
+        summary_points = enhance_profile_summary(
+            parsed, summary_points, min_new=NEW_SUMMARY_POINTS_TO_ADD,
+        )
+    parsed["summary_points"] = summary_points
 
     page_index = build_page_index(parsed, resume_text)
 

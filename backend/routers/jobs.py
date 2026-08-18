@@ -20,8 +20,9 @@ from typing import List
 
 from database import get_db
 from models import JobDescription, User
-from schemas import JDCreate, JDOut
+from schemas import JDCreate, JDOut, JDWeightsUpdate
 from routers.auth import get_current_user
+from services.duplicate_service import find_similar_jds
 import os as _os
 if _os.getenv("AI_PROVIDER", "gemini").lower() == "ollama":
     from services.ollama_service import parse_jd
@@ -32,6 +33,15 @@ router = APIRouter(prefix="/jobs", tags=["Job Descriptions"])
 
 # Max file size: 10 MB
 MAX_FILE_BYTES = 10 * 1024 * 1024
+
+# Default scoring weights — must match services/matching_service.py's defaults.
+DEFAULT_WEIGHTS = {
+    "weight_skills":       55.0,
+    "weight_experience":   25.0,
+    "weight_nice_to_have": 15.0,
+    "weight_education":     5.0,
+}
+WEIGHTS_SUM_TOLERANCE = 0.5  # allow tiny float rounding slack around 100
 
 
 # ─────────────────────────────────────────────────────────────
@@ -75,14 +85,36 @@ def _extract_text(file_bytes: bytes, content_type: str, filename: str = "") -> s
 # HELPER: run AI parse + build JobDescription ORM object
 # ─────────────────────────────────────────────────────────────
 def _build_jd_from_text(
-    title: str,
+    title:   str,
     company: str,
     jd_text: str,
     user_id: int,
+    db:      Session,
+    force:   bool = False,
 ) -> JobDescription:
-    """Call AI parser and return an unsaved JobDescription instance."""
+    """
+    Check for near-duplicate JDs, call the AI parser, and return an unsaved
+    JobDescription instance.
+
+    Raises 409 (with the candidate duplicates in `detail`) instead of
+    parsing when a near-duplicate is found and `force` is False — the
+    frontend shows those to the user and resubmits with force=True to
+    proceed anyway.
+    """
     if not jd_text.strip():
         raise HTTPException(status_code=422, detail="Job description text cannot be empty.")
+
+    if not force:
+        existing = db.query(JobDescription).filter(JobDescription.uploaded_by == user_id).all()
+        duplicates = find_similar_jds(existing, title, jd_text)
+        if duplicates:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "This looks similar to an existing job description.",
+                    "duplicates": duplicates,
+                },
+            )
 
     try:
         parsed = parse_jd(jd_text)
@@ -108,6 +140,7 @@ def _build_jd_from_text(
         salary_range        = parsed.get("salary_range"),
         jd_summary          = parsed.get("jd_summary"),
         uploaded_by         = user_id,
+        **DEFAULT_WEIGHTS,
     )
 
 
@@ -129,6 +162,8 @@ def create_jd(
         payload.company or "",
         payload.jd_text,
         current_user.id,
+        db,
+        force=payload.force,
     )
     db.add(jd)
     db.commit()
@@ -143,6 +178,7 @@ def create_jd(
 async def upload_jd_file(
     title:   str        = Form(...),
     company: str        = Form(""),
+    force:   bool       = Form(False),
     file:    UploadFile = File(...),
     db:      Session    = Depends(get_db),
     current_user: User  = Depends(get_current_user),
@@ -164,7 +200,7 @@ async def upload_jd_file(
 
     jd_text = _extract_text(file_bytes, file.content_type or "", file.filename or "")
 
-    jd = _build_jd_from_text(title, company, jd_text, current_user.id)
+    jd = _build_jd_from_text(title, company, jd_text, current_user.id, db, force=force)
     db.add(jd)
     db.commit()
     db.refresh(jd)
@@ -200,6 +236,49 @@ def get_jd(
     jd = db.query(JobDescription).filter(JobDescription.id == jd_id).first()
     if not jd:
         raise HTTPException(status_code=404, detail="Job description not found.")
+    return jd
+
+
+# ─────────────────────────────────────────────────────────────
+# PATCH  /jobs/{id}/weights  – update matching-score weights (owner only)
+# ─────────────────────────────────────────────────────────────
+@router.patch("/{jd_id}/weights", response_model=JDOut)
+def update_jd_weights(
+    jd_id:        int,
+    payload:      JDWeightsUpdate,
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user),
+):
+    """
+    Update the per-JD scoring weights used by the programmatic matcher
+    (services/matching_service.py::compute_match). Must sum to 100.
+    """
+    total = (
+        payload.weight_skills + payload.weight_experience
+        + payload.weight_nice_to_have + payload.weight_education
+    )
+    if abs(total - 100.0) > WEIGHTS_SUM_TOLERANCE:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Weights must sum to 100 (got {total:.1f}).",
+        )
+
+    jd = db.query(JobDescription).filter(
+        JobDescription.id         == jd_id,
+        JobDescription.uploaded_by == current_user.id,
+    ).first()
+    if not jd:
+        raise HTTPException(
+            status_code=404,
+            detail="Job description not found or you don't have permission to edit it.",
+        )
+
+    jd.weight_skills       = payload.weight_skills
+    jd.weight_experience   = payload.weight_experience
+    jd.weight_nice_to_have = payload.weight_nice_to_have
+    jd.weight_education    = payload.weight_education
+    db.commit()
+    db.refresh(jd)
     return jd
 
 

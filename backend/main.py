@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 import os
 
 from database import engine, Base, get_db
-from routers import auth
+from routers.auth import router as auth_router
 from routers import jobs
 from routers import pipeline
 from routers import email
@@ -46,8 +46,8 @@ app.add_middleware(
     allow_headers     = ["*"],
 )
 
-# ── Routers ───────────────────────────────────────────────────
-app.include_router(auth.router)        # /auth/*
+
+app.include_router(auth_router)        # /auth/*
 app.include_router(jobs.router)        # /jobs/*
 app.include_router(pipeline.router)    # /pipeline/*
 app.include_router(email.router)       # /email/*
@@ -56,9 +56,7 @@ app.include_router(interviews.router)  # /interviews/*
 app.include_router(resume_format.router)  # /resume-format/*
 
 
-# ─────────────────────────────────────────────────────────────
-# STARTUP: create tables + migrate new JD columns
-# ─────────────────────────────────────────────────────────────
+
 def _migrate_jd_columns():
     """
     Add new columns to job_descriptions if they don't exist yet.
@@ -74,6 +72,10 @@ def _migrate_jd_columns():
         ("benefits",            "TEXT"),
         ("salary_range",        "VARCHAR(128)"),
         ("jd_summary",          "TEXT"),
+        ("weight_skills",       "FLOAT DEFAULT 55.0"),
+        ("weight_experience",   "FLOAT DEFAULT 25.0"),
+        ("weight_nice_to_have", "FLOAT DEFAULT 15.0"),
+        ("weight_education",    "FLOAT DEFAULT 5.0"),
     ]
     inspector     = inspect(engine)
     existing_cols = {c["name"] for c in inspector.get_columns("job_descriptions")}

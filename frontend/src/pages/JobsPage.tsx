@@ -5,12 +5,13 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import {
   FileText, Plus, Trash2, Cpu, Upload, X,
-  ChevronDown, ChevronUp, MapPin, Clock, GraduationCap, DollarSign, Star,
+  ChevronDown, ChevronUp, MapPin, Clock, GraduationCap, DollarSign, Star, Sliders,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { fetchJDs, createJD, deleteJD, uploadJDFile } from '../services/api'
+import { fetchJDs, createJD, deleteJD, uploadJDFile, updateJDWeights } from '../services/api'
 import BackButton from '../components/BackButton'
-import type { JobDescription } from '../types'
+import DuplicateWarningModal from '../components/DuplicateWarningModal'
+import type { JobDescription, JDDuplicate } from '../types'
 
 type UploadMode = 'text' | 'file'
 
@@ -25,6 +26,84 @@ function Pill({ label, color = 'purple' }: { label: string; color?: string }) {
     <span className={`inline-block text-xs px-2 py-0.5 rounded-full font-medium ${styles[color] ?? styles.purple}`}>
       {label}
     </span>
+  )
+}
+
+// ── Scoring weights editor ──────────────────────────────────────
+type WeightKey = 'weight_skills' | 'weight_experience' | 'weight_nice_to_have' | 'weight_education'
+
+const WEIGHT_FIELDS: { key: WeightKey; label: string }[] = [
+  { key: 'weight_skills',        label: 'Required Skills' },
+  { key: 'weight_experience',    label: 'Experience Fit' },
+  { key: 'weight_nice_to_have',  label: 'Nice-to-have' },
+  { key: 'weight_education',     label: 'Education' },
+]
+
+function ScoringWeightsEditor({ jd }: { jd: JobDescription }) {
+  const qc = useQueryClient()
+  const [weights, setWeights] = useState({
+    weight_skills:       jd.weight_skills,
+    weight_experience:   jd.weight_experience,
+    weight_nice_to_have: jd.weight_nice_to_have,
+    weight_education:    jd.weight_education,
+  })
+
+  const sum = Object.values(weights).reduce((a, b) => a + b, 0)
+  const isValid = Math.abs(sum - 100) < 0.5
+  const isDirty =
+    weights.weight_skills !== jd.weight_skills ||
+    weights.weight_experience !== jd.weight_experience ||
+    weights.weight_nice_to_have !== jd.weight_nice_to_have ||
+    weights.weight_education !== jd.weight_education
+
+  const saveMutation = useMutation({
+    mutationFn: () => updateJDWeights(jd.id, weights),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['jds'] })
+      toast.success('Scoring weights updated.')
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Failed to update weights.'),
+  })
+
+  return (
+    <div>
+      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2 flex items-center gap-1.5">
+        <Sliders size={12} /> Scoring Weights
+      </p>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {WEIGHT_FIELDS.map(({ key, label }) => (
+          <div key={key}>
+            <label className="block text-[11px] text-slate-500 mb-1">{label}</label>
+            <input
+              type="number"
+              min={0}
+              max={100}
+              step={1}
+              value={weights[key]}
+              onChange={(e) => setWeights((w) => ({ ...w, [key]: Number(e.target.value) }))}
+              className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-sm
+                         focus:outline-none focus:ring-2 focus:ring-sky-500"
+            />
+          </div>
+        ))}
+      </div>
+      <div className="flex items-center justify-between mt-3">
+        <p className={`text-xs font-medium ${isValid ? 'text-emerald-600' : 'text-red-500'}`}>
+          Total: {sum.toFixed(0)}% {isValid ? '' : '— must sum to 100'}
+        </p>
+        <button
+          onClick={() => saveMutation.mutate()}
+          disabled={!isValid || !isDirty || saveMutation.isPending}
+          className="px-3 py-1.5 bg-blue-900 text-white rounded-lg text-xs font-semibold
+                     hover:bg-blue-950 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        >
+          {saveMutation.isPending ? 'Saving…' : 'Save Weights'}
+        </button>
+      </div>
+      <p className="text-[11px] text-slate-400 mt-1.5">
+        Controls how much each factor contributes to a candidate's match score in the pipeline.
+      </p>
+    </div>
   )
 }
 
@@ -75,6 +154,11 @@ function JDCard({ jd, onDelete, onMatch }: {
                          rounded-lg text-xs font-semibold hover:bg-blue-950 transition-colors">
               <Cpu size={13} /> Run Pipeline
             </button>
+            <button onClick={() => setExpanded((v) => !v)}
+              title={expanded ? 'Hide details' : 'Show details'}
+              className="p-1.5 text-slate-400 hover:text-slate-700 transition-colors self-center">
+              {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+            </button>
             <button onClick={onDelete}
               className="p-1.5 text-red-500 hover:text-red-500 transition-colors self-center">
               <Trash2 size={14} />
@@ -106,6 +190,7 @@ function JDCard({ jd, onDelete, onMatch }: {
               </div>
             </div>
           )}
+          <ScoringWeightsEditor jd={jd} />
           <p className="text-xs text-slate-400">Uploaded {new Date(jd.created_at).toLocaleString()}</p>
         </div>
       )}
@@ -125,6 +210,7 @@ export default function JobsPage() {
   const [file, setFile] = useState<File | null>(null)
   const [showForm, setShowForm] = useState(false)
   const [dragOver, setDragOver] = useState(false)
+  const [duplicateInfo, setDuplicateInfo] = useState<{ mode: UploadMode; duplicates: JDDuplicate[] } | null>(null)
 
   const { data: jds = [], isLoading } = useQuery<JobDescription[]>({
     queryKey: ['jds'], queryFn: fetchJDs,
@@ -135,16 +221,24 @@ export default function JobsPage() {
     navigate(`/app/pipeline?jd=${jdId}${folder ? `&folder=${folder}` : ''}`)
   }
 
+  const handleJDError = (e: any, m: UploadMode, fallbackMsg: string) => {
+    if (e?.response?.status === 409) {
+      const duplicates: JDDuplicate[] = e.response.data?.detail?.duplicates ?? []
+      if (duplicates.length > 0) { setDuplicateInfo({ mode: m, duplicates }); return }
+    }
+    toast.error(e?.response?.data?.detail || fallbackMsg)
+  }
+
   const createMutation = useMutation({
-    mutationFn: () => createJD({ title, company: company || undefined, jd_text: jdText }),
-    onSuccess: (jd) => { toast.success('JD saved & parsed! Launching pipeline…'); qc.invalidateQueries({ queryKey: ['jds'] }); resetForm(); goToPipeline(jd.id) },
-    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Failed to save JD'),
+    mutationFn: (force: boolean = false) => createJD({ title, company: company || undefined, jd_text: jdText, force }),
+    onSuccess: (jd) => { setDuplicateInfo(null); toast.success('JD saved & parsed! Launching pipeline…'); qc.invalidateQueries({ queryKey: ['jds'] }); resetForm(); goToPipeline(jd.id) },
+    onError: (e: any) => handleJDError(e, 'text', 'Failed to save JD'),
   })
 
   const uploadMutation = useMutation({
-    mutationFn: () => uploadJDFile(file!, title, company || undefined),
-    onSuccess: (jd) => { toast.success('File uploaded & parsed! Launching pipeline…'); qc.invalidateQueries({ queryKey: ['jds'] }); resetForm(); goToPipeline(jd.id) },
-    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Failed to parse file'),
+    mutationFn: (force: boolean = false) => uploadJDFile(file!, title, company || undefined, force),
+    onSuccess: (jd) => { setDuplicateInfo(null); toast.success('File uploaded & parsed! Launching pipeline…'); qc.invalidateQueries({ queryKey: ['jds'] }); resetForm(); goToPipeline(jd.id) },
+    onError: (e: any) => handleJDError(e, 'file', 'Failed to parse file'),
   })
 
   const deleteMutation = useMutation({
@@ -153,14 +247,30 @@ export default function JobsPage() {
     onError: () => toast.error('Delete failed'),
   })
 
-  const resetForm = () => { setTitle(''); setCompany(''); setJdText(''); setFile(null); setShowForm(false) }
+  const resetForm = () => { setTitle(''); setCompany(''); setJdText(''); setFile(null); setShowForm(false); setDuplicateInfo(null) }
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!title.trim()) { toast.error('Job title is required'); return }
     if (mode === 'text' && !jdText.trim()) { toast.error('JD text is required'); return }
     if (mode === 'file' && !file) { toast.error('Please select a file'); return }
-    mode === 'file' ? uploadMutation.mutate() : createMutation.mutate()
+    mode === 'file' ? uploadMutation.mutate(false) : createMutation.mutate(false)
+  }
+
+  const handleContinueAnyway = () => {
+    if (duplicateInfo?.mode === 'file') uploadMutation.mutate(true)
+    else if (duplicateInfo?.mode === 'text') createMutation.mutate(true)
+  }
+
+  const handleCancelDuplicate = () => {
+    if (duplicateInfo?.mode === 'file') {
+      setFile(null)
+      if (fileRef.current) fileRef.current.value = ''
+      uploadMutation.reset()
+    } else if (duplicateInfo?.mode === 'text') {
+      createMutation.reset()
+    }
+    setDuplicateInfo(null)
   }
 
   const isPending = createMutation.isPending || uploadMutation.isPending
@@ -288,6 +398,15 @@ export default function JobsPage() {
               onMatch={() => goToPipeline(jd.id)} />
           ))}
         </div>
+      )}
+
+      {duplicateInfo && (
+        <DuplicateWarningModal
+          duplicates={duplicateInfo.duplicates}
+          loading={isPending}
+          onCancel={handleCancelDuplicate}
+          onContinue={handleContinueAnyway}
+        />
       )}
     </div>
   )

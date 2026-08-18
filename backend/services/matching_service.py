@@ -21,7 +21,15 @@ Scoring weights
 """
 
 import re
-from typing import Dict, Any, List, Set
+from typing import Dict, Any, List, Optional, Set
+
+# Built-in default weights — used whenever a JD has no configured weights.
+DEFAULT_WEIGHTS: Dict[str, float] = {
+    "skills":       55.0,
+    "experience":   25.0,
+    "nice_to_have": 15.0,
+    "education":     5.0,
+}
 
 
 # ── Semantic aliases ──────────────────────────────────────────
@@ -307,6 +315,7 @@ def compute_match(
     candidate_edu:      str = "",
     work_history_text:  str = "",
     bm25_bonus:         float = 0.0,
+    weights:            Optional[Dict[str, float]] = None,
 ) -> Dict[str, Any]:
     """
     Compute match_score, matched_skills, missing_skills, extra_skills,
@@ -320,7 +329,14 @@ def compute_match(
     0-5 points) reflecting this candidate's BM25 relevance to the JD
     relative to the rest of the pool — differentiates candidates who'd
     otherwise land on an identical skill/experience/education score.
+
+    weights: per-JD override of {"skills", "experience", "nice_to_have",
+    "education"} point maximums (should sum to 100). Falls back to
+    DEFAULT_WEIGHTS when not provided — same values this function always
+    used before weights became configurable.
     """
+    w = {**DEFAULT_WEIGHTS, **(weights or {})}
+
     required     = jd_data.get("required_skills", [])
     nice_to_have = jd_data.get("nice_to_have_skills", [])
     exp_min      = float(jd_data.get("experience_min") or 0)
@@ -353,36 +369,43 @@ def compute_match(
     extra = [s for s in candidate_skills
              if not (_skill_to_canonical_set(s) & req_canonicals)][:10]
 
-    # ── Score: skill coverage (55%) ───────────────────────────
+    # ── Score: skill coverage ──────────────────────────────────
+    skills_w = w["skills"]
     if required:
         skill_pct   = len(matched) / len(required)
-        skill_score = skill_pct * 55
+        skill_score = skill_pct * skills_w
     else:
-        skill_score = 27.5
+        skill_score = skills_w / 2
         skill_pct   = 0.5
 
-    # ── Score: experience fit (25%) ───────────────────────────
+    # ── Score: experience fit ──────────────────────────────────
+    # Tapering shape is unchanged from the original fixed 25-point version —
+    # just scaled proportionally by this JD's experience weight.
+    exp_w = w["experience"]
+    exp_k = exp_w / 25.0
     if exp_min <= candidate_exp <= exp_max:
-        exp_score = 25.0
+        exp_score = exp_w
     elif candidate_exp < exp_min:
         gap = exp_min - candidate_exp
-        exp_score = max(0.0, 25.0 - gap * 5)
+        exp_score = max(0.0, exp_w - gap * 5 * exp_k)
     else:
         # Over-qualified: taper score based on how far above exp_max
         overshoot = candidate_exp - exp_max
-        exp_score = max(10.0, 22.0 - overshoot * 1.5)
+        exp_score = max(10.0 * exp_k, (exp_w - 3 * exp_k) - overshoot * 1.5 * exp_k)
 
-    # ── Score: nice-to-have bonus (15%) ───────────────────────
+    # ── Score: nice-to-have bonus ──────────────────────────────
+    nice_w = w["nice_to_have"]
     if nice_to_have:
         nth_matched = sum(1 for s in nice_to_have if _skills_match(s, cand_set))
-        nice_score  = (nth_matched / len(nice_to_have)) * 15
+        nice_score  = (nth_matched / len(nice_to_have)) * nice_w
     else:
-        nice_score  = 7.5
+        nice_score  = nice_w / 2
 
-    # ── Score: education fit (5%) ─────────────────────────────
+    # ── Score: education fit ───────────────────────────────────
+    edu_w = w["education"]
     edu_score = 0.0
     if not edu_required or edu_required in ("not specified", "null", "none"):
-        edu_score = 2.5  # no requirement — neutral
+        edu_score = edu_w / 2  # no requirement — neutral
     elif candidate_edu:
         cand_edu_lower = candidate_edu.lower()
         # Check for degree level keywords
@@ -393,10 +416,10 @@ def compute_match(
             jd_idx   = _EDU_LEVELS.index(jd_level)
             cand_idx = _EDU_LEVELS.index(cand_level)
             # Higher index = lower degree; candidate meets or exceeds requirement
-            edu_score = 5.0 if cand_idx <= jd_idx else 2.5
+            edu_score = edu_w if cand_idx <= jd_idx else edu_w / 2
         else:
             # Fallback: any education mentioned is a partial match
-            edu_score = 2.5
+            edu_score = edu_w / 2
     # else: edu required but candidate has none → 0
 
     total = round(min(100.0, max(0.0, skill_score + exp_score + nice_score + edu_score + bm25_bonus)), 1)

@@ -9,7 +9,8 @@ import { useNavigate, Link } from 'react-router-dom'
 import { Upload, FileText, CheckCircle, ArrowRight, X, Cpu, CheckCheck, AlertTriangle } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { fetchHome, uploadJDFile, createJD } from '../services/api'
-import type { JobDescription } from '../types'
+import type { JobDescription, JDDuplicate } from '../types'
+import DuplicateWarningModal from '../components/DuplicateWarningModal'
 
 // ── Types returned by /home ───────────────────────────────────
 interface HomeData {
@@ -44,6 +45,9 @@ export default function HomePage() {
   // ── Login banner from sessionStorage ─────────────────────
   const [loginBanner, setLoginBanner] = useState<{ type: 'success' | 'error'; msg: string } | null>(null)
 
+  // ── Duplicate-JD confirmation ─────────────────────────────
+  const [duplicateInfo, setDuplicateInfo] = useState<{ mode: UploadMode; duplicates: JDDuplicate[] } | null>(null)
+
   useEffect(() => {
     if (sessionStorage.getItem('login_success')) {
       setLoginBanner({ type: 'success', msg: 'You have successfully signed in with Google!' })
@@ -65,31 +69,62 @@ export default function HomePage() {
     navigate(`/app/pipeline?jd=${jdId}${folder ? `&folder=${folder}` : ''}`)
   }
 
+  // ── Duplicate-JD 409 helper — shows the confirm modal instead of a toast ──
+  const handleJDError = (e: any, mode: UploadMode, fallbackMsg: string) => {
+    if (e?.response?.status === 409) {
+      const duplicates: JDDuplicate[] = e.response.data?.detail?.duplicates ?? []
+      if (duplicates.length > 0) {
+        setDuplicateInfo({ mode, duplicates })
+        return
+      }
+    }
+    toast.error(e?.response?.data?.detail || fallbackMsg)
+  }
+
   // ── File upload mutation ──────────────────────────────────
   const fileMutation = useMutation({
-    mutationFn: () => uploadJDFile(file!, fileTitle, fileCompany || undefined),
+    mutationFn: (force: boolean = false) => uploadJDFile(file!, fileTitle, fileCompany || undefined, force),
     onSuccess: (jd: JobDescription) => {
+      setDuplicateInfo(null)
       queryClient.invalidateQueries({ queryKey: ['jds'] })
       queryClient.invalidateQueries({ queryKey: ['home'] })
       toast.success('JD uploaded! Launching pipeline…')
       goToPipeline(jd.id)
     },
-    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Upload failed. Please try again.'),
+    onError: (e: any) => handleJDError(e, 'file', 'Upload failed. Please try again.'),
   })
 
   // ── Text submit mutation ──────────────────────────────────
   const textMutation = useMutation({
-    mutationFn: () => createJD({ title: textTitle, company: textCompany || undefined, jd_text: textBody }),
+    mutationFn: (force: boolean = false) =>
+      createJD({ title: textTitle, company: textCompany || undefined, jd_text: textBody, force }),
     onSuccess: (jd: JobDescription) => {
+      setDuplicateInfo(null)
       queryClient.invalidateQueries({ queryKey: ['jds'] })
       queryClient.invalidateQueries({ queryKey: ['home'] })
       toast.success('JD saved! Launching pipeline…')
       goToPipeline(jd.id)
     },
-    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Failed to save JD. Please try again.'),
+    onError: (e: any) => handleJDError(e, 'text', 'Failed to save JD. Please try again.'),
   })
 
   const isBusy = fileMutation.isPending || textMutation.isPending
+
+  const handleContinueAnyway = () => {
+    if (duplicateInfo?.mode === 'file') fileMutation.mutate(true)
+    else if (duplicateInfo?.mode === 'text') textMutation.mutate(true)
+  }
+
+  const handleCancelDuplicate = () => {
+    if (duplicateInfo?.mode === 'file') {
+      setFile(null)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+      fileMutation.reset()
+    } else if (duplicateInfo?.mode === 'text') {
+      textMutation.reset()
+    }
+    setDuplicateInfo(null)
+  }
 
   // ── Drop handlers ─────────────────────────────────────────
   const handleDrop = (e: React.DragEvent) => {
@@ -114,14 +149,14 @@ export default function HomePage() {
     e.preventDefault()
     if (!file)       return toast.error('Please select a file.')
     if (!fileTitle)  return toast.error('Please enter a job title.')
-    fileMutation.mutate()
+    fileMutation.mutate(false)
   }
 
   const handleTextSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!textTitle) return toast.error('Please enter a job title.')
     if (!textBody)  return toast.error('Please paste the job description text.')
-    textMutation.mutate()
+    textMutation.mutate(false)
   }
 
   const resetForm = () => {
@@ -134,6 +169,7 @@ export default function HomePage() {
     setTextBody('')
     fileMutation.reset()
     textMutation.reset()
+    setDuplicateInfo(null)
   }
 
   // ─────────────────────────────────────────────────────────
@@ -442,6 +478,15 @@ export default function HomePage() {
             ))}
           </div>
         </div>
+      )}
+
+      {duplicateInfo && (
+        <DuplicateWarningModal
+          duplicates={duplicateInfo.duplicates}
+          loading={isBusy}
+          onCancel={handleCancelDuplicate}
+          onContinue={handleContinueAnyway}
+        />
       )}
     </div>
   )

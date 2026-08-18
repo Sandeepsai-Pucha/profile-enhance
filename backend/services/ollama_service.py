@@ -210,6 +210,68 @@ Resume:
 
 
 # ═══════════════════════════════════════════════════════════════
+# 2b. ENHANCE THIN PROFILE SUMMARIES
+# ═══════════════════════════════════════════════════════════════
+def enhance_profile_summary(
+    resume_data:     Dict[str, Any],
+    existing_points: List[str],
+    min_new:         int = 7,
+) -> List[str]:
+    """
+    If the resume's Profile Summary has fewer than 3 points, generate
+    `min_new` additional points from the candidate's Work Experience /
+    Key Projects and append them to the existing ones.
+    """
+    if len(existing_points) >= 3:
+        return existing_points
+
+    work_history = resume_data.get("work_history") or []
+    if not work_history:
+        return existing_points
+
+    history_lines = [
+        f"- {wh.get('title') or ''} at {wh.get('company') or ''} "
+        f"| Technologies: {wh.get('technologies') or ''} "
+        f"| {wh.get('description') or ''} "
+        f"| Responsibilities: {'; '.join(wh.get('responsibilities') or [])}"
+        for wh in work_history
+    ]
+
+    prompt = f"""You are a professional resume writer. This candidate's Profile Summary
+section is too thin (only {len(existing_points)} point(s)). Write exactly {min_new}
+additional, distinct professional summary bullet points based on their Work Experience
+and Key Projects below.
+
+Existing Profile Summary points (do NOT repeat these — complement them):
+{chr(10).join(f"- {p}" for p in existing_points) or "(none)"}
+
+Candidate's Current Role: {resume_data.get('current_role') or 'Not specified'}
+Total Experience: {resume_data.get('experience_years', 0)} years
+Skills: {', '.join((resume_data.get('skills') or [])[:20])}
+
+Work Experience / Key Projects:
+{chr(10).join(history_lines)}
+
+Rules:
+- Each point is a single, concise sentence (max 25 words), written in resume style (no "I"),
+  starting with a strong descriptor or action phrase (e.g., "Experienced in...",
+  "Proven track record of...", "Skilled at...").
+- Base every point strictly on the work experience/projects given — do not invent
+  employers, technologies, or metrics that aren't implied by the data above.
+- Do not duplicate the meaning of the existing points.
+- Return ONLY a JSON array of exactly {min_new} strings — no markdown, no explanation.
+"""
+    try:
+        raw  = _call_ollama(prompt, label="enhance_profile_summary")
+        data = _parse_json(raw, [])
+        new_points = [str(p).strip() for p in data if str(p).strip()] if isinstance(data, list) else []
+        return existing_points + new_points[:min_new]
+    except Exception as e:
+        print(f"[Ollama] enhance_profile_summary failed: {e}")
+        return existing_points
+
+
+# ═══════════════════════════════════════════════════════════════
 # 3. MATCH RESUME TO JD
 # ═══════════════════════════════════════════════════════════════
 def match_resume_to_jd(

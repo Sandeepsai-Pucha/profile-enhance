@@ -15,6 +15,9 @@ import type {
   IndexingResult,
   IndexingStatusOut,
   ResumesListOut,
+  JobDescription,
+  JDWeights,
+  FailedParsesListOut,
 } from "../types";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
@@ -92,13 +95,20 @@ export const createJD = (data: {
   title: string;
   company?: string;
   jd_text: string;
+  force?: boolean;
 }) => api.post("/jobs/", data).then((r) => r.data);
 
-export const uploadJDFile = (file: File, title: string, company?: string) => {
+export const uploadJDFile = (
+  file: File,
+  title: string,
+  company?: string,
+  force?: boolean,
+) => {
   const form = new FormData();
   form.append("file", file);
   form.append("title", title);
   if (company) form.append("company", company);
+  if (force) form.append("force", "true");
   return api
     .post("/jobs/upload-file", form, {
       headers: { "Content-Type": "multipart/form-data" },
@@ -107,6 +117,12 @@ export const uploadJDFile = (file: File, title: string, company?: string) => {
 };
 
 export const deleteJD = (id: number) => api.delete(`/jobs/${id}`);
+
+export const updateJDWeights = (
+  id: number,
+  weights: JDWeights,
+): Promise<JobDescription> =>
+  api.patch(`/jobs/${id}/weights`, weights).then((r) => r.data);
 
 // ══════════════════════════════════════════════════════════════
 //  PIPELINE
@@ -167,6 +183,12 @@ export const fetchIndexingStatus = (): Promise<IndexingStatusOut> =>
 
 export const resetIndexing = (): Promise<{ deleted: number; message: string }> =>
   api.delete("/indexing/reset").then((r) => r.data);
+
+export const fetchFailedParses = (): Promise<FailedParsesListOut> =>
+  api.get("/indexing/failed").then((r) => r.data);
+
+export const retryFailedParses = (): Promise<IndexingResult> =>
+  api.post("/indexing/retry-failed").then((r) => r.data);
 
 export const generateUpdatedResume = (
   source_file_id: string,

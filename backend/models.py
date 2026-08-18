@@ -60,6 +60,15 @@ class JobDescription(Base):
     salary_range         = Column(String(128))            # "$120k – $150k" or null
     jd_summary           = Column(Text)                   # 2-sentence AI summary
 
+    # ── Configurable scoring weights (must sum to 100) ───────
+    # Used by services/matching_service.py::compute_match(). Defaults mirror
+    # that module's built-in weights (skill coverage / experience / nice-to-
+    # have / education).
+    weight_skills        = Column(Float, default=55.0)
+    weight_experience    = Column(Float, default=25.0)
+    weight_nice_to_have  = Column(Float, default=15.0)
+    weight_education     = Column(Float, default=5.0)
+
     uploaded_by = Column(Integer, ForeignKey("users.id"))
     created_at  = Column(DateTime(timezone=True), server_default=func.now())
 

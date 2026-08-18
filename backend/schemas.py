@@ -39,6 +39,7 @@ class JDCreate(BaseModel):
     title: str
     company: Optional[str] = None
     jd_text: str
+    force: bool = False   # bypass near-duplicate warning and create anyway
 
 
 class JDOut(BaseModel):
@@ -60,8 +61,20 @@ class JDOut(BaseModel):
     jd_summary:          Optional[str]
     uploaded_by:         Optional[int]
     created_at:          datetime
+    # Configurable scoring weights (must sum to 100) — see matching_service.py
+    weight_skills:         float = 55.0
+    weight_experience:     float = 25.0
+    weight_nice_to_have:   float = 15.0
+    weight_education:      float = 5.0
 
     model_config = {"from_attributes": True}
+
+
+class JDWeightsUpdate(BaseModel):
+    weight_skills:       float = Field(..., ge=0, le=100)
+    weight_experience:   float = Field(..., ge=0, le=100)
+    weight_nice_to_have: float = Field(..., ge=0, le=100)
+    weight_education:    float = Field(..., ge=0, le=100)
 
 
 # ═══════════════════════════════════════════════════════════════

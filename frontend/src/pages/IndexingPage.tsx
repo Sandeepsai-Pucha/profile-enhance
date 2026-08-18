@@ -7,12 +7,13 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Database, Play, Trash2, CheckCircle2, AlertCircle,
   UploadCloud, FileText, X, RefreshCw, RefreshCcw,
-  ChevronDown, ChevronUp,
+  ChevronDown, ChevronUp, AlertOctagon,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import {
   uploadResumes, fetchResumeFiles,
   deleteResumeFile, runIndexing, reindexAll, resetIndexing,
+  fetchFailedParses, retryFailedParses,
 } from '../services/api'
 import type { ResumeFileOut, IndexingResult, Stream } from '../types'
 import { ALL_STREAMS } from '../types'
@@ -128,6 +129,79 @@ function RunResultBanner({ result }: { result: IndexingResult }) {
             <li key={i} className="text-xs text-amber-800">• {e}</li>
           ))}
         </ul>
+      )}
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────
+// Failed parses queue — resumes that exhausted all parse retries
+// ─────────────────────────────────────────────────────────────
+function FailedParsesPanel() {
+  const queryClient = useQueryClient()
+  const [expanded, setExpanded] = useState(false)
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['failed-parses'],
+    queryFn: fetchFailedParses,
+  })
+
+  const retryMutation = useMutation({
+    mutationFn: retryFailedParses,
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['failed-parses'] })
+      queryClient.invalidateQueries({ queryKey: ['resume-files'] })
+      const msg = `${result.indexed} recovered, ${result.total - result.indexed} still failing`
+      if (result.total - result.indexed > 0) toast.error(msg)
+      else toast.success(msg)
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Retry failed.'),
+  })
+
+  const total = data?.total ?? 0
+  if (!isLoading && total === 0) return null
+
+  return (
+    <div className="bg-white border border-red-200 rounded-2xl shadow-sm overflow-hidden">
+      <button
+        onClick={() => setExpanded((v) => !v)}
+        className="w-full px-4 py-3 flex items-center justify-between hover:bg-red-50/50 transition-colors"
+      >
+        <span className="flex items-center gap-2 text-sm font-semibold text-red-700">
+          <AlertOctagon size={15} />
+          {isLoading ? 'Checking failed parses…' : `${total} resume${total === 1 ? '' : 's'} failed to parse`}
+        </span>
+        {expanded ? <ChevronUp size={14} className="text-red-400" /> : <ChevronDown size={14} className="text-red-400" />}
+      </button>
+
+      {expanded && (
+        <div className="border-t border-red-100">
+          <div className="max-h-64 overflow-y-auto">
+            {(data?.failed ?? []).map((f) => (
+              <div key={f.source_file_id} className="px-4 py-3 border-b border-red-50 last:border-0">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm font-medium text-slate-800 truncate">{f.file_name}</p>
+                  <span className="text-[11px] text-slate-400 shrink-0">{f.attempts} attempt{f.attempts !== 1 ? 's' : ''}</span>
+                </div>
+                <p className="text-xs text-red-600 mt-0.5">{f.error}</p>
+              </div>
+            ))}
+          </div>
+          <div className="px-4 py-3 bg-red-50/50">
+            <button
+              onClick={() => retryMutation.mutate()}
+              disabled={retryMutation.isPending}
+              className="w-full flex items-center justify-center gap-2 py-2 bg-red-600 text-white
+                         rounded-lg text-sm font-semibold hover:bg-red-700 disabled:opacity-50 transition-colors"
+            >
+              {retryMutation.isPending ? (
+                <><div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" /> Retrying…</>
+              ) : (
+                <><RefreshCw size={14} /> Retry All Failed</>
+              )}
+            </button>
+          </div>
+        </div>
       )}
     </div>
   )
@@ -424,6 +498,9 @@ export default function IndexingPage() {
 
         {/* ── Right: File list ──────────────────────────────── */}
         <div className="lg:col-span-2 space-y-5">
+
+          {/* Failed-parse retry queue */}
+          <FailedParsesPanel />
 
           {/* Last run banner */}
           {(indexMutation.data || reindexMutation.data) && (
