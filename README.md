@@ -86,50 +86,6 @@ docker run -d \
   postgres:16
 ```
 
----
-
-## 🔑 Environment Variables
-
-```bash
-# 1. Copy the example file
-cd backend
-cp .env.example .env
-```
-
-Edit `backend/.env`:
-
-```env
-# PostgreSQL
-DATABASE_URL=postgresql://postgres:password@localhost:5432/skillify_db
-
-# Google OAuth
-# → https://console.cloud.google.com/ → APIs & Services → Credentials
-# → Create OAuth 2.0 Client ID (Web application)
-# → Add redirect URI: http://localhost:8000/auth/google/callback
-GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
-GOOGLE_CLIENT_SECRET=your-client-secret
-GOOGLE_REDIRECT_URI=http://localhost:8000/auth/google/callback
-
-# Anthropic Claude API
-# → https://console.anthropic.com/
-ANTHROPIC_API_KEY=sk-ant-...
-
-# JWT (generate with: python -c "import secrets; print(secrets.token_hex(32))")
-SECRET_KEY=your-random-64-char-hex-string
-ALGORITHM=HS256
-ACCESS_TOKEN_EXPIRE_MINUTES=60
-
-# Frontend URL (for OAuth redirect after login)
-FRONTEND_URL=http://localhost:5173
-```
-
-Also create `frontend/.env`:
-```env
-VITE_API_URL=http://localhost:8000
-```
-
----
-
 ## 🐍 Backend Setup
 
 ```bash
